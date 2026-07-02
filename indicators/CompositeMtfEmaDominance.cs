@@ -25,15 +25,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private EMA[] ema50;
         private EMA[] ema233;
-        private ATR atr;
-        private Series<double> rawComposite50;
 
         protected override void OnStateChange()
         {
             if (State == State.SetDefaults)
             {
                 Name = "CompositeMtfEmaDominance";
-                Description = "Composite MTF EMA 50 filtered by Composite MTF EMA 233 dominance.";
+                Description = "Composite MTF EMA 50 + 233.";
                 IsOverlay = true;
                 Calculate = Calculate.OnPriceChange;
                 IsSuspendedWhileInactive = true;
@@ -41,6 +39,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 EmaSource = CompositeEmaPriceSource.Close;
                 UseConfirmedBars = true;
                 ShowCompositeEma233 = true;
+                ShowCompositeEma50 = true;
 
                 UseTimeframe1 = true;
                 UseTimeframe2 = true;
@@ -59,14 +58,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 Timeframe5Type = BarsPeriodType.Minute;
                 Timeframe5Value = 3;
 
-                AtrLength = 14;
-                HideNear233Atr = 0.35;
-                MinSeparationAtr = 0.25;
-                SlopeLookback = 5;
-                MinSlopeAtr = 0.10;
-
-                AddPlot(Brushes.Orange, "CompositeEMA233");
-                AddPlot(Brushes.LimeGreen, "CompositeEMA50");
+                AddPlot(Brushes.Red, "CompositeEMA233");
+                AddPlot(Brushes.Blue, "CompositeEMA50");
             }
             else if (State == State.Configure)
             {
@@ -87,9 +80,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     ema50[slot] = EMA(GetPriceSeries(seriesIndex), 50);
                     ema233[slot] = EMA(GetPriceSeries(seriesIndex), 233);
                 }
-
-                atr = ATR(AtrLength);
-                rawComposite50 = new Series<double>(this);
             }
         }
 
@@ -103,39 +93,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             double composite233 = GetComposite233(barsAgo);
             double composite50 = GetComposite50(barsAgo);
 
-            rawComposite50[0] = composite50;
-
-            Values[0][0] = ShowCompositeEma233 ? composite233 : double.NaN;
-
-            if (double.IsNaN(composite233) || double.IsNaN(composite50))
-            {
-                Values[1][0] = double.NaN;
-                return;
-            }
-
-            Values[1][0] = composite50;
-            PlotBrushes[1][0] = Brushes.Transparent;
-
-            if (CurrentBar < SlopeLookback || double.IsNaN(rawComposite50[SlopeLookback]))
-                return;
-
-            double atrValue = atr[0];
-            double previousComposite50 = rawComposite50[SlopeLookback];
-
-            bool priceNearEma233 = Math.Abs(Close[0] - composite233) <= atrValue * HideNear233Atr;
-            bool emaSeparationStrong = Math.Abs(composite50 - composite233) >= atrValue * MinSeparationAtr;
-            bool ema50SlopeStrong = Math.Abs(composite50 - previousComposite50) >= atrValue * MinSlopeAtr;
-
-            bool bullishTrend = Close[0] > composite50 && composite50 > composite233 && composite50 > previousComposite50;
-            bool bearishTrend = Close[0] < composite50 && composite50 < composite233 && composite50 < previousComposite50;
-
-            bool showEma50 = emaSeparationStrong
-                && ema50SlopeStrong
-                && (bullishTrend || bearishTrend)
-                && !priceNearEma233;
-
-            if (showEma50)
-                PlotBrushes[1][0] = bullishTrend ? Brushes.LimeGreen : Brushes.Red;
+            Values[0][0] = ShowCompositeEma233 && !double.IsNaN(composite233) ? composite233 : double.NaN;
+            Values[1][0] = ShowCompositeEma50 && !double.IsNaN(composite50) ? composite50 : double.NaN;
         }
 
         private ISeries<double> GetPriceSeries(int seriesIndex)
@@ -232,6 +191,10 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool ShowCompositeEma233 { get; set; }
 
         [NinjaScriptProperty]
+        [Display(Name = "Show Composite EMA 50", Order = 4, GroupName = "Parameters")]
+        public bool ShowCompositeEma50 { get; set; }
+
+        [NinjaScriptProperty]
         [Display(Name = "Use Timeframe 1", Order = 1, GroupName = "Timeframe 1")]
         public bool UseTimeframe1 { get; set; }
 
@@ -295,31 +258,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Value", Order = 3, GroupName = "Timeframe 5")]
         public int Timeframe5Value { get; set; }
-
-        [Range(1, int.MaxValue)]
-        [NinjaScriptProperty]
-        [Display(Name = "ATR Length", Order = 1, GroupName = "Strength Filter")]
-        public int AtrLength { get; set; }
-
-        [Range(0, double.MaxValue)]
-        [NinjaScriptProperty]
-        [Display(Name = "Hide Near EMA 233 ATR Mult", Order = 2, GroupName = "Strength Filter")]
-        public double HideNear233Atr { get; set; }
-
-        [Range(0, double.MaxValue)]
-        [NinjaScriptProperty]
-        [Display(Name = "Min EMA Separation ATR Mult", Order = 3, GroupName = "Strength Filter")]
-        public double MinSeparationAtr { get; set; }
-
-        [Range(1, int.MaxValue)]
-        [NinjaScriptProperty]
-        [Display(Name = "EMA 50 Slope Lookback", Order = 4, GroupName = "Strength Filter")]
-        public int SlopeLookback { get; set; }
-
-        [Range(0, double.MaxValue)]
-        [NinjaScriptProperty]
-        [Display(Name = "Min EMA 50 Slope ATR Mult", Order = 5, GroupName = "Strength Filter")]
-        public double MinSlopeAtr { get; set; }
 
         [Browsable(false)]
         [XmlIgnore]

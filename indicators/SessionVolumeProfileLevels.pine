@@ -1,0 +1,251 @@
+//@version=6
+indicator("Session Volume Profile Levels (9:30-9:30)", "SVP Levels", overlay = true, max_lines_count = 500, max_labels_count = 250)
+
+// ---------------- Inputs ----------------
+grpS = "Sesión"
+tzIn        = input.string("America/New_York", "Zona horaria", group = grpS)
+startHour   = input.int(9,  "Hora inicio", minval = 0, maxval = 23, group = grpS)
+startMinute = input.int(30, "Minuto inicio", minval = 0, maxval = 59, group = grpS)
+
+grpP = "Perfil"
+rowPoints = input.float(1.0, "Tamaño de fila (puntos)", minval = 0.01, step = 0.25, group = grpP)
+vaPct     = input.float(70.0, "Value Area %", minval = 50, maxval = 95, group = grpP)
+useLtf    = input.bool(true, "Usar datos de 1 minuto", group = grpP, tooltip = "Construye el perfil con barras intradía de 1 min. Si se desactiva usa las velas del chart.")
+
+grpL = "Niveles"
+showVA   = input.bool(true, "Mostrar VAH/VAL sesión anterior", group = grpL)
+maxNaked = input.int(12, "Máx. naked POCs", minval = 0, maxval = 50, group = grpL)
+showLbl  = input.bool(true, "Mostrar etiquetas", group = grpL)
+
+grpF1 = "Filtro de proximidad"
+useProx = input.bool(true, "Ocultar niveles lejanos", group = grpF1)
+atrLen  = input.int(14, "ATR longitud", minval = 1, group = grpF1)
+atrMult = input.float(10.0, "Distancia máx. (x ATR)", minval = 0.1, step = 0.5, group = grpF1)
+
+grpF2 = "Filtro direccional (EMA composite MTF)"
+useDir = input.bool(true, "Activar filtro direccional", group = grpF2, tooltip = "Tendencia alcista: solo muestra niveles debajo del precio (soportes de continuación). Bajista: solo encima. Neutral: todos.")
+tf1 = input.timeframe("120", "Timeframe 1", group = grpF2)
+tf2 = input.timeframe("60",  "Timeframe 2", group = grpF2)
+tf3 = input.timeframe("34",  "Timeframe 3", group = grpF2)
+tf4 = input.timeframe("13",  "Timeframe 4", group = grpF2)
+tf5 = input.timeframe("5",   "Timeframe 5", group = grpF2)
+
+grpE = "Estilo"
+pocColor   = input.color(color.orange, "POC sesión anterior", group = grpE)
+vaColor    = input.color(color.silver, "VAH / VAL", group = grpE)
+nakedColor = input.color(color.new(color.orange, 35), "Naked POC", group = grpE)
+lineWidth  = input.int(1, "Grosor de línea", minval = 1, maxval = 3, group = grpE)
+
+// ---------------- Sesión 9:30 -> 9:30 ----------------
+startMin = startHour * 60 + startMinute
+nyMin    = hour(time, tzIn) * 60 + minute(time, tzIn)
+// Nueva sesión: primera barra >= 9:30 viniendo de una barra < 9:30 (fusiona fines de semana/feriados)
+isNewSession = nyMin >= startMin and (na(nyMin[1]) or nyMin[1] < startMin)
+
+// ---------------- Datos de 1 minuto ----------------
+ltfRes = timeframe.in_seconds() <= 60 ? timeframe.period : "1"
+[ltfH, ltfL, ltfV] = request.security_lower_tf(syminfo.tickerid, ltfRes, [high, low, volume])
+
+// ---------------- Estado del perfil ----------------
+rowSz = math.max(rowPoints, syminfo.mintick)
+
+var profile = map.new<int, float>()
+var float sessVol      = 0.0
+var int   minBin       = na
+var int   maxBin       = na
+var bool  sessValid    = false
+var int   curSessStart = na
+
+// Niveles dibujados
+var pocLines   = array.new_line()
+var pocLabels  = array.new_label()
+var pocPrices  = array.new_float()
+var pocTouched = array.new_bool()
+var pocTimes   = array.new_int()
+var line  vahLine  = na
+var line  valLine  = na
+var label vahLabel = na
+var label valLabel = na
+var float vahPrice = na
+var float valPrice = na
+
+// ---------------- POC / VAH / VAL de la sesión completada ----------------
+computeLevels() =>
+    int   pocIdx = na
+    float pocVol = 0.0
+    for i = minBin to maxBin
+        v = nz(map.get(profile, i))
+        if v > pocVol
+            pocVol := v
+            pocIdx := i
+    float target = sessVol * vaPct / 100.0
+    float va     = pocVol
+    int   up     = pocIdx + 1
+    int   dn     = pocIdx - 1
+    int   vahIdx = pocIdx
+    int   valIdx = pocIdx
+    while va < target and (up <= maxBin or dn >= minBin)
+        float vUp = up <= maxBin ? nz(map.get(profile, up)) : -1.0
+        float vDn = dn >= minBin ? nz(map.get(profile, dn)) : -1.0
+        if vUp >= vDn
+            va     += math.max(vUp, 0.0)
+            vahIdx := up
+            up     += 1
+        else
+            va     += math.max(vDn, 0.0)
+            valIdx := dn
+            dn     -= 1
+    [(pocIdx + 0.5) * rowSz, (vahIdx + 0.5) * rowSz, (valIdx + 0.5) * rowSz]
+
+// ---------------- Rollover de sesión ----------------
+if isNewSession
+    if sessValid and sessVol > 0 and not na(minBin)
+        [poc, vah, val] = computeLevels()
+
+        // El POC anterior pasa a naked (o se elimina si ya fue tocado)
+        int n = pocLines.size()
+        if n > 0
+            if pocTouched.get(n - 1)
+                line.delete(pocLines.get(n - 1))
+                label.delete(pocLabels.get(n - 1))
+                pocLines.remove(n - 1)
+                pocLabels.remove(n - 1)
+                pocPrices.remove(n - 1)
+                pocTouched.remove(n - 1)
+                pocTimes.remove(n - 1)
+            else
+                line.set_style(pocLines.last(), line.style_dotted)
+                if showLbl
+                    label.set_text(pocLabels.last(), "nPOC " + str.format_time(pocTimes.last(), "dd MMM", tzIn))
+
+        // Niveles de la sesión recién completada
+        pocLines.push(line.new(bar_index, poc, bar_index + 1, poc, extend = extend.right, color = pocColor, width = lineWidth))
+        pocLabels.push(showLbl ? label.new(bar_index, poc, "POC", style = label.style_label_left, color = color.new(color.black, 100), textcolor = pocColor, size = size.small) : label(na))
+        pocPrices.push(poc)
+        pocTouched.push(false)
+        pocTimes.push(curSessStart)
+
+        line.delete(vahLine)
+        line.delete(valLine)
+        label.delete(vahLabel)
+        label.delete(valLabel)
+        vahPrice := na
+        valPrice := na
+        if showVA
+            vahLine  := line.new(bar_index, vah, bar_index + 1, vah, extend = extend.right, color = vaColor, width = lineWidth, style = line.style_solid)
+            valLine  := line.new(bar_index, val, bar_index + 1, val, extend = extend.right, color = vaColor, width = lineWidth, style = line.style_solid)
+            vahLabel := showLbl ? label.new(bar_index, vah, "VAH", style = label.style_label_left, color = color.new(color.black, 100), textcolor = vaColor, size = size.small) : label(na)
+            valLabel := showLbl ? label.new(bar_index, val, "VAL", style = label.style_label_left, color = color.new(color.black, 100), textcolor = vaColor, size = size.small) : label(na)
+            vahPrice := vah
+            valPrice := val
+
+        // Límite de naked POCs (+1 por el POC de la sesión anterior)
+        while pocLines.size() > maxNaked + 1
+            line.delete(pocLines.get(0))
+            label.delete(pocLabels.get(0))
+            pocLines.remove(0)
+            pocLabels.remove(0)
+            pocPrices.remove(0)
+            pocTouched.remove(0)
+            pocTimes.remove(0)
+
+    map.clear(profile)
+    sessVol      := 0.0
+    minBin       := na
+    maxBin       := na
+    sessValid    := true
+    curSessStart := time
+
+// ---------------- Acumulación del perfil (solo barras confirmadas) ----------------
+if barstate.isconfirmed
+    bool hasLtf = useLtf and ltfV.size() > 0
+    int  count  = hasLtf ? ltfV.size() : 1
+    for k = 0 to count - 1
+        float h = hasLtf ? ltfH.get(k) : high
+        float l = hasLtf ? ltfL.get(k) : low
+        float v = hasLtf ? nz(ltfV.get(k)) : nz(volume)
+        if v > 0 and not na(h) and not na(l)
+            int i0 = int(math.floor(l / rowSz))
+            int i1 = int(math.floor(h / rowSz))
+            if i1 - i0 < 5000
+                float vp = v / (i1 - i0 + 1)
+                for i = i0 to i1
+                    map.put(profile, i, nz(map.get(profile, i)) + vp)
+                minBin  := na(minBin) ? i0 : math.min(minBin, i0)
+                maxBin  := na(maxBin) ? i1 : math.max(maxBin, i1)
+                sessVol += v
+
+// ---------------- Naked POCs: eliminar al ser tocados ----------------
+int j = 0
+while j < pocLines.size()
+    float p = pocPrices.get(j)
+    bool touched  = high >= p and low <= p
+    bool isNewest = j == pocLines.size() - 1
+    if touched and isNewest
+        pocTouched.set(j, true)
+        j += 1
+    else if touched
+        line.delete(pocLines.get(j))
+        label.delete(pocLabels.get(j))
+        pocLines.remove(j)
+        pocLabels.remove(j)
+        pocPrices.remove(j)
+        pocTouched.remove(j)
+        pocTimes.remove(j)
+    else
+        j += 1
+
+// ---------------- Sesgo: EMA composite MTF (50/233, valores confirmados) ----------------
+f_conf() =>
+    m50  = ta.ema(close, 50)
+    m233 = ta.ema(close, 233)
+    [m50[1], m233[1]]
+
+[a50, a233] = request.security(syminfo.tickerid, tf1, f_conf(), lookahead = barmerge.lookahead_on)
+[b50, b233] = request.security(syminfo.tickerid, tf2, f_conf(), lookahead = barmerge.lookahead_on)
+[c50, c233] = request.security(syminfo.tickerid, tf3, f_conf(), lookahead = barmerge.lookahead_on)
+[d50, d233] = request.security(syminfo.tickerid, tf4, f_conf(), lookahead = barmerge.lookahead_on)
+[g50, g233] = request.security(syminfo.tickerid, tf5, f_conf(), lookahead = barmerge.lookahead_on)
+
+comp50  = math.avg(a50, b50, c50, d50, g50)
+comp233 = math.avg(a233, b233, c233, d233, g233)
+int bias = not useDir or na(comp50) or na(comp233) ? 0 : close > comp50 and comp50 > comp233 ? 1 : close < comp50 and comp50 < comp233 ? -1 : 0
+
+// ---------------- Filtros de visibilidad ----------------
+atrVal = ta.atr(atrLen)
+
+levelVisible(float p) =>
+    okProx = not useProx or math.abs(close - p) <= atrMult * atrVal
+    okDir  = not useDir or bias == 0 or (bias > 0 ? p <= close : p >= close)
+    okProx and okDir
+
+if pocLines.size() > 0
+    for k = 0 to pocLines.size() - 1
+        color base = k == pocLines.size() - 1 ? pocColor : nakedColor
+        bool  vis  = levelVisible(pocPrices.get(k))
+        line.set_color(pocLines.get(k), vis ? base : color.new(base, 100))
+        label lb = pocLabels.get(k)
+        if not na(lb)
+            label.set_textcolor(lb, vis ? base : color.new(base, 100))
+
+if not na(vahLine)
+    bool visH = levelVisible(vahPrice)
+    bool visL = levelVisible(valPrice)
+    line.set_color(vahLine, visH ? vaColor : color.new(vaColor, 100))
+    line.set_color(valLine, visL ? vaColor : color.new(vaColor, 100))
+    if not na(vahLabel)
+        label.set_textcolor(vahLabel, visH ? vaColor : color.new(vaColor, 100))
+    if not na(valLabel)
+        label.set_textcolor(valLabel, visL ? vaColor : color.new(vaColor, 100))
+
+// ---------------- Etiquetas pegadas al borde derecho ----------------
+if barstate.islast and showLbl
+    if pocLabels.size() > 0
+        for k = 0 to pocLabels.size() - 1
+            label lb = pocLabels.get(k)
+            if not na(lb)
+                label.set_x(lb, bar_index + 3)
+    if not na(vahLabel)
+        label.set_x(vahLabel, bar_index + 3)
+    if not na(valLabel)
+        label.set_x(valLabel, bar_index + 3)
