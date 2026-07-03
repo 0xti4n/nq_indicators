@@ -109,6 +109,30 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         private double usdPerPointEff = 2.0;
 
+        // Cached visuals (created once in DataLoaded)
+        private SimpleFont tpslFont;
+        private SimpleFont signalFont;
+        private SimpleFont dashFont;
+        private Brush dashAreaDark;
+        private Brush dashAreaLight;
+
+        // Public output series
+        private Series<double> trendSeries;
+        private Series<double> mlScoreSeries;
+
+        // Incremental autocorrelation state
+        private double acCorrSum, acR1Sq, acR2Sq;
+
+        // Redraw-on-change trackers
+        private bool tpslLinesDrawn;
+        private double lastSLDrawn = double.NaN;
+        private double lastMoneyStopDrawn = double.NaN;
+        private readonly double[] curAvgLvl = new double[10];
+        private readonly int[] curAvgQty = new int[10];
+        private readonly double[] lastAvgLvl = new double[10];
+        private readonly int[] lastAvgQty = new int[10];
+        private int lastAvgCount = -1;
+
         // HTF selection resolved at Configure
         private BarsPeriodType htfType = BarsPeriodType.Day;
         private int htfValue = 1;
@@ -257,7 +281,18 @@ namespace NinjaTrader.NinjaScript.Indicators
                 vcSeries = new Series<double>(this);
                 macdSeries = new Series<double>(this);
                 rsiSeries = new Series<double>(this);
-                bandSeries = new Series<double>(this);
+                bandSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                trendSeries = new Series<double>(this);
+                mlScoreSeries = new Series<double>(this);
+
+                tpslFont = new SimpleFont("Arial", TpslFontSize());
+                signalFont = new SimpleFont("Arial", 11);
+                int dashFontSize = DashFontSize == AdaptiveTrendFontSize.Small ? 11 : DashFontSize == AdaptiveTrendFontSize.Normal ? 13 : 16;
+                dashFont = new SimpleFont("Consolas", dashFontSize);
+                dashAreaDark = new SolidColorBrush(Color.FromArgb(230, 0x13, 0x17, 0x22));
+                dashAreaDark.Freeze();
+                dashAreaLight = new SolidColorBrush(Color.FromArgb(230, 0xFF, 0xFF, 0xFF));
+                dashAreaLight.Freeze();
 
                 sumAbsChange = SUM(absChange, ProfileLookback);
                 int emaSmoothLen = Math.Max(ProfileLookback / 3, 10);
@@ -333,6 +368,13 @@ namespace NinjaTrader.NinjaScript.Indicators
             segmentId = 0;
             segmentStartBar = 0;
             firstDrawBar = -1;
+
+            acCorrSum = 0; acR1Sq = 0; acR2Sq = 0;
+
+            tpslLinesDrawn = false;
+            lastSLDrawn = double.NaN;
+            lastMoneyStopDrawn = double.NaN;
+            lastAvgCount = -1;
         }
 
         private void ResolveHtf()
@@ -493,15 +535,28 @@ namespace NinjaTrader.NinjaScript.Indicators
             double volCluster = SafeDiv(atr20Ind[0], atrProfile, 1.0);
 
             int acWindow = (int)Clamp(ProfileLookback, 50, 100);
-            double corrSum = 0, r1Sq = 0, r2Sq = 0;
-            int maxI = Math.Min(acWindow - 1, Math.Max(CurrentBar - 1, 0));
-            for (int i = 0; i <= maxI; i++)
+            if (CurrentBar <= acWindow + 1 || CurrentBar % 500 == 0)
             {
-                double r1 = ret1[i];
-                double r2 = i + 1 <= CurrentBar ? ret1[i + 1] : 0.0;
-                corrSum += r1 * r2; r1Sq += r1 * r1; r2Sq += r2 * r2;
+                // Full recompute: warmup + periodic refresh to cancel floating-point drift
+                acCorrSum = 0; acR1Sq = 0; acR2Sq = 0;
+                int maxI = Math.Min(acWindow - 1, Math.Max(CurrentBar - 1, 0));
+                for (int i = 0; i <= maxI; i++)
+                {
+                    double r1 = ret1[i];
+                    double r2 = i + 1 <= CurrentBar ? ret1[i + 1] : 0.0;
+                    acCorrSum += r1 * r2; acR1Sq += r1 * r1; acR2Sq += r2 * r2;
+                }
             }
-            double autoCorr = SafeDiv(corrSum, Math.Sqrt(r1Sq * r2Sq), 0.0);
+            else
+            {
+                // O(1) rolling update: add newest pair, drop the one leaving the window
+                double rNew0 = ret1[0], rNew1 = ret1[1];
+                double rOldW = ret1[acWindow], rOldW1 = ret1[acWindow + 1];
+                acCorrSum += rNew0 * rNew1 - rOldW * rOldW1;
+                acR1Sq += rNew0 * rNew0 - rOldW * rOldW;
+                acR2Sq += rNew1 * rNew1 - rOldW1 * rOldW1;
+            }
+            double autoCorr = SafeDiv(acCorrSum, Math.Sqrt(Math.Max(acR1Sq, 0.0) * Math.Max(acR2Sq, 0.0)), 0.0);
 
             // ── Regime classification ──
             erSeries[0] = efficiencyRatio;
@@ -728,6 +783,9 @@ namespace NinjaTrader.NinjaScript.Indicators
             double normalizedScore = weightSum > 0 ? rawMLScore / weightSum : 50.0;
             double mlScore = Sigmoid100(normalizedScore, 50.0, 0.08);
 
+            trendSeries[0] = trendDir;
+            mlScoreSeries[0] = mlScore;
+
             // ── Self-learning ──
             const double decayRate = 0.98;
             bool anyMatured = false;
@@ -814,11 +872,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                     {
                         tp1Hit = true; tp1JustHit = true;
                         RemoveDrawObject("AT_TP1Lbl");
+                        if (tpslLinesDrawn)
+                        {
+                            RemoveDrawObject("AT_TP1Ray");
+                            Draw.Line(this, "AT_TP1Line", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp1Price, 0, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                        }
                     }
                     if (TpLevels >= 2 && !tp2Hit && !double.IsNaN(tp2Price) && (posDir == 1 ? High[0] >= tp2Price : Low[0] <= tp2Price))
                     {
                         tp2Hit = true; tp2JustHit = true;
                         RemoveDrawObject("AT_TP2Lbl");
+                        if (tpslLinesDrawn)
+                        {
+                            RemoveDrawObject("AT_TP2Ray");
+                            Draw.Line(this, "AT_TP2Line", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp2Price, 0, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                        }
                     }
                     if (TpLevels >= 3 && !tp3Hit && !double.IsNaN(tp3Price) && (posDir == 1 ? High[0] >= tp3Price : Low[0] <= tp3Price))
                     {
@@ -870,6 +938,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 exitReason = "";
                 entryBarIdx = CurrentBar;
 
+                tpslLinesDrawn = false;
+                lastSLDrawn = double.NaN;
+                lastMoneyStopDrawn = double.NaN;
+                lastAvgCount = -1;
+
                 double entryGap = Math.Abs(newEntry - newSL);
                 entryContracts = entryGap > 0 && usdPerPointEff > 0
                     ? Math.Max(ContractsPerEntry, (int)Math.Floor(RiskUsd / (entryGap * usdPerPointEff)))
@@ -915,34 +988,38 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
             }
 
-            // ── Extend TP/SL/entry lines and labels ──
+            // ── TP/SL/entry lines (rays drawn once, redrawn only on change) + labels ──
             if (UseTPSL && posDir != 0 && ShowTPSLLines && entryBarIdx >= 0 && canDraw)
             {
                 int startAgo = CurrentBar - Math.Max(entryBarIdx, firstDrawBar);
-                int fontSize = TpslFontSize();
-                SimpleFont font = new SimpleFont("Arial", fontSize);
+                SimpleFont font = tpslFont;
 
-                Draw.Line(this, "AT_Entry", false, startAgo, entryPrice, 0, entryPrice, EntryLineBrush(), DashStyleHelper.Dot, 1);
+                if (!tpslLinesDrawn)
+                {
+                    Draw.Ray(this, "AT_Entry", false, startAgo, entryPrice, -1, entryPrice, EntryLineBrush(), DashStyleHelper.Dot, 1);
+                    if (!tp1Hit)
+                        Draw.Ray(this, "AT_TP1Ray", false, startAgo, tp1Price, -1, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                    if (TpLevels >= 2 && !double.IsNaN(tp2Price) && !tp2Hit)
+                        Draw.Ray(this, "AT_TP2Ray", false, startAgo, tp2Price, -1, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                    if (TpLevels >= 3 && !double.IsNaN(tp3Price) && !tp3Hit)
+                        Draw.Ray(this, "AT_TP3Ray", false, startAgo, tp3Price, -1, tp3Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                    tpslLinesDrawn = true;
+                }
+
+                if (!slPrice.Equals(lastSLDrawn))
+                {
+                    Draw.Ray(this, "AT_SL", false, startAgo, slPrice, -1, slPrice, SlLineBrush(), DashStyleHelper.Solid, 1);
+                    lastSLDrawn = slPrice;
+                }
+
                 Draw.Text(this, "AT_EntryLbl", false, "Entry " + Fmt(entryPrice), -3, entryPrice, 0, EntryLineBrush(), font, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-
-                Draw.Line(this, "AT_SL", false, startAgo, slPrice, 0, slPrice, SlLineBrush(), DashStyleHelper.Solid, 1);
                 Draw.Text(this, "AT_SLLbl", false, "TR SL " + Fmt(slPrice), -3, slPrice, 0, SlLineBrush(), font, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-
                 if (!tp1Hit)
-                {
-                    Draw.Line(this, "AT_TP1", false, startAgo, tp1Price, 0, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     Draw.Text(this, "AT_TP1Lbl", false, "TP1 " + Fmt(tp1Price), -3, tp1Price, 0, TpLineBrush(), font, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-                }
                 if (TpLevels >= 2 && !double.IsNaN(tp2Price) && !tp2Hit)
-                {
-                    Draw.Line(this, "AT_TP2", false, startAgo, tp2Price, 0, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     Draw.Text(this, "AT_TP2Lbl", false, "TP2 " + Fmt(tp2Price), -3, tp2Price, 0, TpLineBrush(), font, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-                }
                 if (TpLevels >= 3 && !double.IsNaN(tp3Price) && !tp3Hit)
-                {
-                    Draw.Line(this, "AT_TP3", false, startAgo, tp3Price, 0, tp3Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     Draw.Text(this, "AT_TP3Lbl", false, "TP3 " + Fmt(tp3Price), -3, tp3Price, 0, TpLineBrush(), font, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
-                }
             }
 
             // ── Money stop line (informative, removed once trailing SL passes it) ──
@@ -958,11 +1035,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                 }
                 else if (canDraw && entryBarIdx >= 0)
                 {
-                    int msStartAgo = CurrentBar - Math.Max(entryBarIdx, firstDrawBar);
-                    SimpleFont msFont = new SimpleFont("Arial", TpslFontSize());
-                    Draw.Line(this, "AT_MoneyStop", false, msStartAgo, moneyStopPrice, 0, moneyStopPrice, Brushes.Gray, DashStyleHelper.Dash, 1);
+                    if (!moneyStopPrice.Equals(lastMoneyStopDrawn))
+                    {
+                        int msStartAgo = CurrentBar - Math.Max(entryBarIdx, firstDrawBar);
+                        Draw.Ray(this, "AT_MoneyStop", false, msStartAgo, moneyStopPrice, -1, moneyStopPrice, Brushes.Gray, DashStyleHelper.Dash, 1);
+                        lastMoneyStopDrawn = moneyStopPrice;
+                    }
                     Draw.Text(this, "AT_MoneyStopLbl", false, "MAX RISK " + Fmt(moneyStopPrice), -3, moneyStopPrice, 0,
-                        Brushes.Gray, msFont, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
+                        Brushes.Gray, tpslFont, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
                 }
             }
 
@@ -1022,7 +1102,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                     int levelCount = m + 1;
 
                     int avgStartAgo = CurrentBar - Math.Max(entryBarIdx, firstDrawBar);
-                    SimpleFont avgFont = new SimpleFont("Arial", TpslFontSize());
                     double entryOverlapDist = Math.Max(sep * 0.5, TickSize * 2);
 
                     int drawn = 0;
@@ -1031,32 +1110,53 @@ namespace NinjaTrader.NinjaScript.Indicators
                         if (Math.Abs(lvl[j] - entryPrice) < entryOverlapDist)
                             continue;
 
+                        curAvgLvl[drawn] = lvl[j];
+                        curAvgQty[drawn] = qty[j];
                         drawn++;
-                        Draw.Line(this, "AT_Avg" + drawn, false, avgStartAgo, lvl[j], 0, lvl[j], AvgLineBrush(), DashStyleHelper.Dash, 1);
-                        Draw.Text(this, "AT_AvgLbl" + drawn, false, "AVG" + drawn + " " + Fmt(lvl[j]) + " (+" + qty[j] + ")", -3, lvl[j], 0,
-                            AvgLineBrush(), avgFont, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
                     }
 
-                    for (int j = drawn + 1; j <= maxAvgLevels; j++)
+                    bool avgChanged = drawn != lastAvgCount;
+                    if (!avgChanged)
+                        for (int j = 0; j < drawn; j++)
+                            if (!curAvgLvl[j].Equals(lastAvgLvl[j]) || curAvgQty[j] != lastAvgQty[j])
+                            {
+                                avgChanged = true;
+                                break;
+                            }
+
+                    if (avgChanged)
                     {
-                        RemoveDrawObject("AT_Avg" + j);
-                        RemoveDrawObject("AT_AvgLbl" + j);
+                        for (int j = 0; j < drawn; j++)
+                        {
+                            Draw.Ray(this, "AT_Avg" + (j + 1), false, avgStartAgo, curAvgLvl[j], -1, curAvgLvl[j], AvgLineBrush(), DashStyleHelper.Dash, 1);
+                            lastAvgLvl[j] = curAvgLvl[j];
+                            lastAvgQty[j] = curAvgQty[j];
+                        }
+                        for (int j = drawn + 1; j <= maxAvgLevels; j++)
+                        {
+                            RemoveDrawObject("AT_Avg" + j);
+                            RemoveDrawObject("AT_AvgLbl" + j);
+                        }
+                        lastAvgCount = drawn;
                     }
+
+                    for (int j = 0; j < drawn; j++)
+                        Draw.Text(this, "AT_AvgLbl" + (j + 1), false, "AVG" + (j + 1) + " " + Fmt(curAvgLvl[j]) + " (+" + curAvgQty[j] + ")", -3, curAvgLvl[j], 0,
+                            AvgLineBrush(), tpslFont, System.Windows.TextAlignment.Left, Brushes.Transparent, Brushes.Transparent, 0);
                 }
             }
 
             // ── TP/SL hit labels ──
             if (UseTPSL && canDraw)
             {
-                SimpleFont hitFont = new SimpleFont("Arial", TpslFontSize());
                 if (tp1JustHit)
-                    Draw.Text(this, "AT_TP1Hit" + CurrentBar, false, "TP1 X", 1, tp1Price, 0, Brushes.White, hitFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
+                    Draw.Text(this, "AT_TP1Hit" + CurrentBar, false, "TP1 X", 1, tp1Price, 0, Brushes.White, tpslFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
                 if (tp2JustHit)
-                    Draw.Text(this, "AT_TP2Hit" + CurrentBar, false, "TP2 X", 1, tp2Price, 0, Brushes.White, hitFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
+                    Draw.Text(this, "AT_TP2Hit" + CurrentBar, false, "TP2 X", 1, tp2Price, 0, Brushes.White, tpslFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
                 if (posJustClosed && exitReason == "TP3")
-                    Draw.Text(this, "AT_TP3Hit" + CurrentBar, false, "TP3 X", 1, tp3Price, 0, Brushes.White, hitFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
+                    Draw.Text(this, "AT_TP3Hit" + CurrentBar, false, "TP3 X", 1, tp3Price, 0, Brushes.White, tpslFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
                 if (posJustClosed && exitReason == "SL")
-                    Draw.Text(this, "AT_SLHit" + CurrentBar, false, "SL X", 1, slHitPrice, 0, Brushes.White, hitFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BearColor, 100);
+                    Draw.Text(this, "AT_SLHit" + CurrentBar, false, "SL X", 1, slHitPrice, 0, Brushes.White, tpslFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BearColor, 100);
 
                 if (posDir == 0 && posJustClosed)
                     ClearTpslDrawings();
@@ -1074,10 +1174,10 @@ namespace NinjaTrader.NinjaScript.Indicators
 
                 if (ShowSignals && confirmedBuy)
                     Draw.Text(this, "AT_Long" + CurrentBar, false, "Long", 0, High[0] + atrVal * 0.8, 0, Brushes.White,
-                        new SimpleFont("Arial", 11), System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
+                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
                 if (ShowSignals && confirmedSell)
                     Draw.Text(this, "AT_Short" + CurrentBar, false, "Short", 0, Low[0] - atrVal * 0.8, 0, Brushes.White,
-                        new SimpleFont("Arial", 11), System.Windows.TextAlignment.Center, Brushes.Transparent, BearColor, 100);
+                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BearColor, 100);
 
                 if (ShowMLDebug && confirmedBuy)
                     Draw.Text(this, "AT_MLDbg" + CurrentBar, mlScore.ToString("0.0"), 0, High[0] + atrVal * 1.6, BullColor);
@@ -1131,9 +1231,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             RemoveDrawObject("AT_Entry"); RemoveDrawObject("AT_EntryLbl");
             RemoveDrawObject("AT_SL"); RemoveDrawObject("AT_SLLbl");
-            RemoveDrawObject("AT_TP1"); RemoveDrawObject("AT_TP1Lbl");
-            RemoveDrawObject("AT_TP2"); RemoveDrawObject("AT_TP2Lbl");
-            RemoveDrawObject("AT_TP3"); RemoveDrawObject("AT_TP3Lbl");
+            RemoveDrawObject("AT_TP1"); RemoveDrawObject("AT_TP1Ray"); RemoveDrawObject("AT_TP1Line"); RemoveDrawObject("AT_TP1Lbl");
+            RemoveDrawObject("AT_TP2"); RemoveDrawObject("AT_TP2Ray"); RemoveDrawObject("AT_TP2Line"); RemoveDrawObject("AT_TP2Lbl");
+            RemoveDrawObject("AT_TP3"); RemoveDrawObject("AT_TP3Ray"); RemoveDrawObject("AT_TP3Lbl");
             RemoveDrawObject("AT_Vert");
             RemoveDrawObject("AT_MoneyStop");
             RemoveDrawObject("AT_MoneyStopLbl");
@@ -1148,6 +1248,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RemoveDrawObject("AT_Avg" + j);
                 RemoveDrawObject("AT_AvgLbl" + j);
             }
+            lastAvgCount = -1;
         }
 
         private Brush EntryLineBrush() { return Brushes.DodgerBlue; }
@@ -1239,16 +1340,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 default: pos = TextPosition.TopRight; break;
             }
 
-            int fontSize = DashFontSize == AdaptiveTrendFontSize.Small ? 11 : DashFontSize == AdaptiveTrendFontSize.Normal ? 13 : 16;
             bool dark = IsDarkTheme();
             Brush textBrush = dark ? Brushes.Gainsboro : Brushes.Black;
-            Brush areaBrush = dark
-                ? new SolidColorBrush(Color.FromArgb(230, 0x13, 0x17, 0x22))
-                : new SolidColorBrush(Color.FromArgb(230, 0xFF, 0xFF, 0xFF));
-            areaBrush.Freeze();
+            Brush areaBrush = dark ? dashAreaDark : dashAreaLight;
 
             Draw.TextFixed(this, "AT_Dash", sb.ToString(), pos, textBrush,
-                new SimpleFont("Consolas", fontSize), Brushes.Transparent, areaBrush, 90);
+                dashFont, Brushes.Transparent, areaBrush, 90);
         }
 
         private void FireAlerts(bool confirmedBuy, bool confirmedSell, bool tp1JustHit, bool tp2JustHit,
@@ -1691,6 +1788,27 @@ namespace NinjaTrader.NinjaScript.Indicators
         public Series<double> BandDown
         {
             get { return Values[1]; }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> TrendDirection
+        {
+            get { return trendSeries; }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> MLScore
+        {
+            get { return mlScoreSeries; }
+        }
+
+        [Browsable(false)]
+        [XmlIgnore]
+        public Series<double> SuperTrendBand
+        {
+            get { return bandSeries; }
         }
         #endregion
     }

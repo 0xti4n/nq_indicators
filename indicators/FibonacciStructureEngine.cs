@@ -44,6 +44,17 @@ namespace NinjaTrader.NinjaScript.Indicators
         private ATR atr;
         private Series<double> bodySeries;
         private EMA bodyEma;
+        private SimpleFont signalFont;
+        private SimpleFont dashboardFont;
+        private Brush eqFadedBrush;
+        private Brush fibRefBrush;
+        private Brush fib236Brush;
+        private Brush fib382Brush;
+        private Brush fib500Brush;
+        private Brush fib618Brush;
+        private Brush fib786Brush;
+        private Brush bullTargetFadedBrush;
+        private Brush bearTargetFadedBrush;
 
         // ── Swings ──
         private double swHigh1 = double.NaN, swHigh2 = double.NaN;
@@ -111,7 +122,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IsSuspendedWhileInactive = true;
                 DrawOnPricePanel = true;
                 PaintPriceMarkers = false;
-                MaximumBarsLookBack = MaximumBarsLookBack.Infinite;
+                MaximumBarsLookBack = MaximumBarsLookBack.TwoHundredFiftySix;
 
                 // Main
                 SwingLength = 10;
@@ -148,6 +159,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ShowSignals = false;
                 StructureLineStyle = FibStructLineStyle.Dashed;
                 StructureLineWidth = 2;
+                HistoricalPlotBars = 300;
 
                 // Dashboard
                 ShowDashboard = true;
@@ -176,8 +188,20 @@ namespace NinjaTrader.NinjaScript.Indicators
                 SweepBrush = EnsureFrozen(SweepBrush);
 
                 atr = ATR(14);
-                bodySeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                bodySeries = new Series<double>(this, MaximumBarsLookBack.TwoHundredFiftySix);
                 bodyEma = EMA(bodySeries, 14);
+
+                signalFont = new SimpleFont("Arial", 11);
+                dashboardFont = new SimpleFont("Consolas", 11);
+                eqFadedBrush = Faded(EqBrush, 128);
+                fibRefBrush = Faded(FibBrush, 102);
+                fib236Brush = Faded(FibBrush, 153);
+                fib382Brush = Faded(FibBrush, 178);
+                fib500Brush = Faded(FibBrush, 204);
+                fib618Brush = Faded(FibBrush, 229);
+                fib786Brush = Faded(FibBrush, 178);
+                bullTargetFadedBrush = Faded(BullBrush, 153);
+                bearTargetFadedBrush = Faded(BearBrush, 153);
             }
         }
 
@@ -196,6 +220,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             int warmupBars = Math.Max(SwingLength * 3, 50);
             bool isWarmedUp = CurrentBar >= warmupBars;
+            bool drawEventObjects = ShouldDrawEventObject();
+            bool drawActiveObjects = ShouldDrawActiveObject();
 
             barsSinceLastSignal++;
 
@@ -236,14 +262,14 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             // ── Swing Labels ──
-            if (newSwingHigh && !double.IsNaN(swHigh2) && isWarmedUp && ShowSwingLabels)
+            if (newSwingHigh && !double.IsNaN(swHigh2) && isWarmedUp && ShowSwingLabels && drawEventObjects)
             {
                 string swLbl = swHigh1 > swHigh2 ? "HH" : "LH";
                 Brush swClr = swHigh1 > swHigh2 ? BullBrush : BearBrush;
                 Draw.Text(this, "FSE_SwH" + CurrentBar, swLbl, CurrentBar - swHigh1Idx, swHigh1 + atrValue * 0.35, swClr);
             }
 
-            if (newSwingLow && !double.IsNaN(swLow2) && isWarmedUp && ShowSwingLabels)
+            if (newSwingLow && !double.IsNaN(swLow2) && isWarmedUp && ShowSwingLabels && drawEventObjects)
             {
                 string swLbl = swLow1 > swLow2 ? "HL" : "LL";
                 Brush swClr = swLow1 > swLow2 ? BullBrush : BearBrush;
@@ -269,7 +295,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 eqCounter++;
                 eqhLineTag = "FSE_EQHLine" + eqCounter;
                 eqhLblTag = "FSE_EQHLbl" + eqCounter;
-                if (ShowEqLevels)
+                if (ShowEqLevels && drawEventObjects)
                 {
                     Draw.Line(this, eqhLineTag, false, CurrentBar - eqhStartIdx, eqhPrice, CurrentBar - eqhEndIdx, eqhPrice, EqBrush, DashStyleHelper.Dash, 1);
                     Draw.Text(this, eqhLblTag, "EQH", CurrentBar - swHigh1Idx, eqhPrice + atrValue * 0.35, EqBrush);
@@ -290,7 +316,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 eqCounter++;
                 eqlLineTag = "FSE_EQLLine" + eqCounter;
                 eqlLblTag = "FSE_EQLLbl" + eqCounter;
-                if (ShowEqLevels)
+                if (ShowEqLevels && drawEventObjects)
                 {
                     Draw.Line(this, eqlLineTag, false, CurrentBar - eqlStartIdx, eqlPrice, CurrentBar - eqlEndIdx, eqlPrice, EqBrush, DashStyleHelper.Dash, 1);
                     Draw.Text(this, eqlLblTag, "EQL", CurrentBar - swLow1Idx, eqlPrice - atrValue * 0.35, EqBrush);
@@ -323,8 +349,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (eqhActive)
                     {
                         eqhActive = false;
-                        if (!string.IsNullOrEmpty(eqhLineTag))
-                            Draw.Line(this, eqhLineTag, false, CurrentBar - eqhStartIdx, eqhPrice, 0, eqhPrice, Faded(EqBrush, 128), DashStyleHelper.Dash, 1);
+                        if (!string.IsNullOrEmpty(eqhLineTag) && drawEventObjects)
+                            Draw.Line(this, eqhLineTag, false, CurrentBar - eqhStartIdx, eqhPrice, 0, eqhPrice, eqFadedBrush, DashStyleHelper.Dash, 1);
                     }
                 }
 
@@ -336,16 +362,16 @@ namespace NinjaTrader.NinjaScript.Indicators
                     if (eqlActive)
                     {
                         eqlActive = false;
-                        if (!string.IsNullOrEmpty(eqlLineTag))
-                            Draw.Line(this, eqlLineTag, false, CurrentBar - eqlStartIdx, eqlPrice, 0, eqlPrice, Faded(EqBrush, 128), DashStyleHelper.Dash, 1);
+                        if (!string.IsNullOrEmpty(eqlLineTag) && drawEventObjects)
+                            Draw.Line(this, eqlLineTag, false, CurrentBar - eqlStartIdx, eqlPrice, 0, eqlPrice, eqFadedBrush, DashStyleHelper.Dash, 1);
                     }
                 }
             }
 
-            if (ShowSweeps && sweepHigh)
+            if (ShowSweeps && sweepHigh && drawEventObjects)
                 Draw.Text(this, "FSE_SwpH" + CurrentBar, "✗", 0, High[0] + atrValue * 0.35, SweepBrush);
 
-            if (ShowSweeps && sweepLow)
+            if (ShowSweeps && sweepLow && drawEventObjects)
                 Draw.Text(this, "FSE_SwpL" + CurrentBar, "✗", 0, Low[0] - atrValue * 0.35, SweepBrush);
 
             // ══════════════════════════════════════
@@ -400,7 +426,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
 
             // ── Draw Structure Lines & Labels ──
-            if (ShowStructure && (isBOS || isCHoCH))
+            if (ShowStructure && (isBOS || isCHoCH) && drawEventObjects)
             {
                 double breakPrice = isBullBreak ? (double.IsNaN(swHigh1) ? Close[0] : swHigh1) : (double.IsNaN(swLow1) ? Close[0] : swLow1);
                 Brush breakColor = isBullBreak ? BullBrush : BearBrush;
@@ -559,9 +585,11 @@ namespace NinjaTrader.NinjaScript.Indicators
             {
                 if (fibNeedsRedraw || fibDrawStartIdx < 0)
                     fibDrawStartIdx = CurrentBar;
-                DrawFibLevels();
+
+                if (drawActiveObjects)
+                    DrawFibLevels();
             }
-            else if (fibDrawingsExist)
+            else if (fibDrawingsExist && drawActiveObjects)
             {
                 RemoveFibDrawings();
             }
@@ -640,10 +668,10 @@ namespace NinjaTrader.NinjaScript.Indicators
             bool bearEngulfCtx = bearishEngulf && isWarmedUp && (inPremium || confluenceWeight >= 1.5);
             bool bullEngulfCtx = bullishEngulf && isWarmedUp && (inDiscount || confluenceWeight >= 1.5);
 
-            if (ShowEngulfing && bearEngulfCtx)
+            if (ShowEngulfing && bearEngulfCtx && drawEventObjects)
                 Draw.Text(this, "FSE_EngB" + CurrentBar, "▼", 0, High[0] + atrValue * 0.35, BearBrush);
 
-            if (ShowEngulfing && bullEngulfCtx)
+            if (ShowEngulfing && bullEngulfCtx && drawEventObjects)
                 Draw.Text(this, "FSE_EngU" + CurrentBar, "▲", 0, Low[0] - atrValue * 0.35, BullBrush);
 
             // ══════════════════════════════════════
@@ -696,13 +724,13 @@ namespace NinjaTrader.NinjaScript.Indicators
                 barsSinceLastSignal = 0;
 
             // ── Signal Visuals ──
-            if (ShowSignals && confirmedBuy)
+            if (ShowSignals && confirmedBuy && drawEventObjects)
                 Draw.Text(this, "FSE_Buy" + CurrentBar, false, "BUY", 0, Low[0] - atrValue * 0.8, 0, Brushes.White,
-                    new SimpleFont("Arial", 11), TextAlignment.Center, Brushes.Transparent, BullBrush, 100);
+                    signalFont, TextAlignment.Center, Brushes.Transparent, BullBrush, 100);
 
-            if (ShowSignals && confirmedSell)
+            if (ShowSignals && confirmedSell && drawEventObjects)
                 Draw.Text(this, "FSE_Sell" + CurrentBar, false, "SELL", 0, High[0] + atrValue * 0.8, 0, Brushes.White,
-                    new SimpleFont("Arial", 11), TextAlignment.Center, Brushes.Transparent, BearBrush, 100);
+                    signalFont, TextAlignment.Center, Brushes.Transparent, BearBrush, 100);
 
             // ══════════════════════════════════════
             // NEAREST FIB (for dashboard)
@@ -712,26 +740,13 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             if (fibRangeValid)
             {
-                double[] fibPrices = { fib236Price, fib382Price, fib500Price, fib618Price, fib786Price, fibTgt50Price, fibTargetPrice };
-                string[] fibNames = { "0.236", "0.382", "0.500", "0.618", "0.786", "-0.5", "-0.618" };
-                double minDist = double.NaN;
-                int minIdx = -1;
-                for (int i = 0; i < fibPrices.Length; i++)
-                {
-                    if (double.IsNaN(fibPrices[i]))
-                        continue;
-                    double d = Math.Abs(Close[0] - fibPrices[i]);
-                    if (double.IsNaN(minDist) || d < minDist)
-                    {
-                        minDist = d;
-                        minIdx = i;
-                    }
-                }
-                if (minIdx >= 0)
-                {
-                    nearestFibName = fibNames[minIdx];
-                    nearestFibDist = minDist;
-                }
+                TrackNearestFib("0.236", fib236Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("0.382", fib382Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("0.500", fib500Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("0.618", fib618Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("0.786", fib786Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("-0.5", fibTgt50Price, ref nearestFibName, ref nearestFibDist);
+                TrackNearestFib("-0.618", fibTargetPrice, ref nearestFibName, ref nearestFibDist);
             }
 
             lastNearFibStr = "—";
@@ -748,7 +763,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // ══════════════════════════════════════
             // DASHBOARD
             // ══════════════════════════════════════
-            if (ShowDashboard)
+            if (ShowDashboard && drawActiveObjects)
                 DrawDashboard();
 
             // ══════════════════════════════════════
@@ -799,32 +814,66 @@ namespace NinjaTrader.NinjaScript.Indicators
                 || (Low[0] <= level + tolerance && High[0] >= level - tolerance);
         }
 
+        private bool ShouldDrawEventObject()
+        {
+            if (State != State.Historical)
+                return true;
+            if (HistoricalPlotBars <= 0 || Bars == null || Bars.Count <= 0)
+                return false;
+
+            int firstDrawableBar = Math.Max(0, Bars.Count - HistoricalPlotBars);
+            return CurrentBar >= firstDrawableBar;
+        }
+
+        private bool ShouldDrawActiveObject()
+        {
+            if (State != State.Historical)
+                return true;
+            if (Bars == null || Bars.Count <= 0)
+                return false;
+
+            return CurrentBar >= Bars.Count - 1;
+        }
+
+        private void TrackNearestFib(string name, double price, ref string nearestName, ref double nearestDistance)
+        {
+            if (double.IsNaN(price))
+                return;
+
+            double distance = Math.Abs(Close[0] - price);
+            if (!double.IsNaN(nearestDistance) && distance >= nearestDistance)
+                return;
+
+            nearestName = name;
+            nearestDistance = distance;
+        }
+
         private void DrawFibLevels()
         {
             int startAgo = CurrentBar - fibDrawStartIdx;
             int endAgo = -FibExtensionBars;
-            Brush fibCol = FibBrush;
             Brush targetColor = fibDirection == 1 ? BullBrush : BearBrush;
+            Brush targetFadedColor = fibDirection == 1 ? bullTargetFadedBrush : bearTargetFadedBrush;
 
             // Reference line from swing low to swing high
             Draw.Line(this, "FSE_FibRef", false, CurrentBar - fibSwingLowIdx, fibSwingLow, CurrentBar - fibSwingHighIdx, fibSwingHigh,
-                Faded(fibCol, 102), DashStyleHelper.Dot, 1);
+                fibRefBrush, DashStyleHelper.Dot, 1);
 
             // Golden zone (0.5–0.786)
             double gzTop = Math.Max(fib500Price, fib786Price);
             double gzBot = Math.Min(fib500Price, fib786Price);
             Draw.Rectangle(this, "FSE_FibGZ", false, startAgo, gzTop, endAgo, gzBot, Brushes.Transparent, ConfluenceBrush, 12);
 
-            DrawFibLine("FSE_FibL236", "FSE_FibT236", ShowFib236, fib236Price, "0.236", Faded(fibCol, 153), DashStyleHelper.Dot, 1, endAgo, startAgo);
-            DrawFibLine("FSE_FibL382", "FSE_FibT382", ShowFib382, fib382Price, "0.382", Faded(fibCol, 178), DashStyleHelper.Dot, 1, endAgo, startAgo);
-            DrawFibLine("FSE_FibL500", "FSE_FibT500", ShowFib500, fib500Price, "0.500", Faded(fibCol, 204), DashStyleHelper.Dash, 2, endAgo, startAgo);
-            DrawFibLine("FSE_FibL618", "FSE_FibT618", ShowFib618, fib618Price, "0.618", Faded(fibCol, 229), DashStyleHelper.Solid, 2, endAgo, startAgo);
-            DrawFibLine("FSE_FibL786", "FSE_FibT786", ShowFib786, fib786Price, "0.786", Faded(fibCol, 178), DashStyleHelper.Dot, 1, endAgo, startAgo);
+            DrawFibLine("FSE_FibL236", "FSE_FibT236", ShowFib236, fib236Price, "0.236", fib236Brush, DashStyleHelper.Dot, 1, endAgo, startAgo);
+            DrawFibLine("FSE_FibL382", "FSE_FibT382", ShowFib382, fib382Price, "0.382", fib382Brush, DashStyleHelper.Dot, 1, endAgo, startAgo);
+            DrawFibLine("FSE_FibL500", "FSE_FibT500", ShowFib500, fib500Price, "0.500", fib500Brush, DashStyleHelper.Dash, 2, endAgo, startAgo);
+            DrawFibLine("FSE_FibL618", "FSE_FibT618", ShowFib618, fib618Price, "0.618", fib618Brush, DashStyleHelper.Solid, 2, endAgo, startAgo);
+            DrawFibLine("FSE_FibL786", "FSE_FibT786", ShowFib786, fib786Price, "0.786", fib786Brush, DashStyleHelper.Dot, 1, endAgo, startAgo);
 
             string tgtLabel = fibDirection == 1 ? "Target ↑" : "Target ↓";
             string tgt50Label = fibDirection == 1 ? "-0.5 ↑" : "-0.5 ↓";
             DrawFibLine("FSE_FibLTgt", "FSE_FibTTgt", ShowFibTarget, fibTargetPrice, tgtLabel, targetColor, DashStyleHelper.Dash, 2, endAgo, startAgo);
-            DrawFibLine("FSE_FibLTgt50", "FSE_FibTTgt50", ShowFibTgt50, fibTgt50Price, tgt50Label, Faded(targetColor, 153), DashStyleHelper.Dot, 1, endAgo, startAgo);
+            DrawFibLine("FSE_FibLTgt50", "FSE_FibTTgt50", ShowFibTgt50, fibTgt50Price, tgt50Label, targetFadedColor, DashStyleHelper.Dot, 1, endAgo, startAgo);
 
             // Target zone (-0.5 to -0.618)
             if (ShowFibTarget || ShowFibTgt50)
@@ -890,7 +939,7 @@ namespace NinjaTrader.NinjaScript.Indicators
                 IndicatorVersion;
 
             Draw.TextFixed(this, "FSE_Dash", text, ToTextPosition(DashboardPosition), Brushes.Gainsboro,
-                new SimpleFont("Consolas", 11), Brushes.DimGray, Brushes.Black, 60);
+                dashboardFont, Brushes.DimGray, Brushes.Black, 60);
         }
 
         private void FireAlerts(bool confirmedBuy, bool confirmedSell, string buyTrigger, string sellTrigger,
@@ -1150,6 +1199,12 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Structure Line Width", Order = 3, GroupName = "05. Visual")]
         public int StructureLineWidth { get; set; }
+
+        [Range(0, 5000)]
+        [NinjaScriptProperty]
+        [Display(Name = "Historical Plot Bars", Order = 4, GroupName = "05. Visual",
+            Description = "Limit historical drawing objects. 0 = no historical event markers; higher values draw only the most recent historical bars.")]
+        public int HistoricalPlotBars { get; set; }
 
         // ── Dashboard ──
         [NinjaScriptProperty]
