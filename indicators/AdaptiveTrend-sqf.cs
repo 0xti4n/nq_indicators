@@ -29,9 +29,8 @@ namespace NinjaTrader.NinjaScript.Indicators
 
     public class AdaptiveTrend : Indicator
     {
-        private const string IndicatorVersion = "v5.1.0";
-        private const int PendingSlots = 5;
-        private const double SignalMarkerPointOffset = 1.0;
+        private const string IndicatorVersion = "v5.2.1-sqe-sideways";
+        private const int PendingSlots = 20;
 
         // Indicator bank
         private static readonly int[] AtrLens = { 5, 8, 10, 13, 16, 21, 30, 40, 50 };
@@ -50,7 +49,6 @@ namespace NinjaTrader.NinjaScript.Indicators
         private EMA emaClose26;
         private EMA macdSignalEma;
         private SMA volSma20Ind;
-        private MAX volMax50Ind;
         private EMA htfEmaFast;
         private EMA htfEmaSlow;
 
@@ -70,18 +68,49 @@ namespace NinjaTrader.NinjaScript.Indicators
         // ADX state (Wilder)
         private double smoothTR, smoothDMp, smoothDMm, adxVal;
 
-        // Volume profile state
-        private double hvBarPrice = double.NaN;
-        private int hvBarAge;
+        // Signal Quality Engine state
+        private const int SqBucketCount = 6;       // TRENDING/RANGING/VOLATILE x LONG/SHORT
+        private const int SqScoreWindow = 300;
+        private static readonly string[] SqFeatureNames =
+        {
+            "RSI", "Vol", "Trend", "VolShock", "Band", "MACD", "Struct",
+            "Regime", "MTF", "ADX", "Div", "VP", "Session"
+        };
 
-        // Self-learning state
-        private double adaptiveGate;
+        private readonly double[] sqAdaptiveGate = new double[SqBucketCount];
+        private readonly int[] sqTotal = new int[SqBucketCount];
+        private readonly int[] sqWins = new int[SqBucketCount];
+        private readonly double[] sqOutcomeR = new double[SqBucketCount];
+
         private int totalSignals, winSignals;
+        private double avgSignalQualityR;
+
         private readonly double[] pendPrice = new double[PendingSlots];
+        private readonly double[] pendAtr = new double[PendingSlots];
+        private readonly double[] pendSL = new double[PendingSlots];
+        private readonly double[] pendTP1 = new double[PendingSlots];
+        private readonly double[] pendRisk = new double[PendingSlots];
+        private readonly double[] pendOutcomeR = new double[PendingSlots];
         private readonly int[] pendDir = new int[PendingSlots];
         private readonly int[] pendBar = new int[PendingSlots];
+        private readonly int[] pendBucket = new int[PendingSlots];
         private readonly bool[] pendActive = new bool[PendingSlots];
-        private readonly double[] pendAtr = new double[PendingSlots];
+        private readonly bool[] pendResolved = new bool[PendingSlots];
+
+        private readonly double[] sqScores = new double[SqScoreWindow];
+        private readonly bool[] sqPasses = new bool[SqScoreWindow];
+        private int sqScoreIndex;
+        private int sqScoreCount;
+        private double sqScoreSum;
+        private string sqTopPositive = "-";
+        private string sqTopNegative = "-";
+
+        // Volume profile state
+        private double vpPocPrice = double.NaN;
+        private double vpValueAreaHigh = double.NaN;
+        private double vpValueAreaLow = double.NaN;
+        private double vpDistToPoc = 999.0;
+        private bool vpInValueArea;
 
         private string lastSignal = "-";
         private int barsSinceSignal;
@@ -109,18 +138,19 @@ namespace NinjaTrader.NinjaScript.Indicators
         private int firstDrawBar = -1;
 
         private double usdPerPointEff = 2.0;
+        private double activeRiskBudgetUsd = double.NaN;
+        private double activeRiskMultiplier = 1.0;
 
         // Cached visuals (created once in DataLoaded)
         private SimpleFont tpslFont;
         private SimpleFont signalFont;
-        private SimpleFont signalTriangleFont;
         private SimpleFont dashFont;
         private Brush dashAreaDark;
         private Brush dashAreaLight;
 
         // Public output series
         private Series<double> trendSeries;
-        private Series<double> mlScoreSeries;
+        private Series<double> signalQualityScoreSeries;
 
         // Incremental autocorrelation state
         private double acCorrSum, acR1Sq, acR2Sq;
@@ -148,7 +178,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (State == State.SetDefaults)
             {
                 Name = "AdaptiveTrend";
-                Description = "Adaptive SuperTrend with ML signal filter, MTF confluence and TP/SL system.";
+                Description = "Adaptive SuperTrend with Signal Quality Engine, MTF confluence and TP/SL system.";
                 IsOverlay = true;
                 Calculate = Calculate.OnBarClose;
                 IsSuspendedWhileInactive = true;
@@ -163,6 +193,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                 ProfileLookback = 100;
                 RegimeSensitivity = 1.0;
                 ShowProfile = true;
+                VolumeProfileLookback = 80;
+                VolumeProfileBins = 48;
+                VolumeValueAreaPct = 70.0;
 
                 // MTF
                 UseMTF = true;
@@ -171,18 +204,32 @@ namespace NinjaTrader.NinjaScript.Indicators
                 MtfManualValue = 240;
                 MtfStrictness = AdaptiveTrendMtfStrictness.Moderate;
 
-                // ML
-                UseMLFilter = false;
-                MlGate = 21.0;
+                // Signal Quality Engine
+                UseSignalQualityFilter = true;
+                SignalQualityGate = 50.0;
+                UseDirectionalQualityGates = true;
+                SignalQualityGateLong = 50.0;
+                SignalQualityGateShort = 50.0;
+                UseRegimeQualityGates = true;
+                SignalQualityGateTrending = 45.0;
+                SignalQualityGateRanging = 65.0;
+                SignalQualityGateVolatile = 60.0;
                 SelfLearn = true;
                 EvalHorizon = 15;
-                ShowMLDebug = false;
+                ShowSignalQualityDebug = false;
 
-                // ML weights
+                // Signal Quality Engine weights
+                UseDirectionalQualityWeights = false;
+                UseRegimeWeightProfiles = true;
                 W1Momentum = 0.15; W2Volume = 0.08; W3Trend = 0.15; W4Volatility = -0.08;
                 W5Distance = 0.10; W6Macd = 0.08; W7Structure = 0.08; W8Regime = 0.04;
                 W9Mtf = 0.12; W10Adx = 0.10; W11Divergence = 0.08; W12VolProfile = 0.06;
                 W13Session = 0.04; WBias = 0.0;
+
+                W1MomentumShort = 0.15; W2VolumeShort = 0.08; W3TrendShort = 0.15; W4VolatilityShort = -0.08;
+                W5DistanceShort = 0.10; W6MacdShort = 0.08; W7StructureShort = 0.08; W8RegimeShort = 0.04;
+                W9MtfShort = 0.12; W10AdxShort = 0.10; W11DivergenceShort = 0.08; W12VolProfileShort = 0.06;
+                W13SessionShort = 0.04; WBiasShort = 0.0;
 
                 // Filters
                 Cushion = 0.15;
@@ -192,6 +239,15 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RsiThreshold = 45.0;
                 UseVolumeFilter = false;
                 VolMultiplier = 1.2;
+
+                // Sideways / Chop Filter
+                UseSidewaysFilter = true;
+                MinTrendAdx = 18.0;
+                MinEfficiencyRatio = 0.25;
+                RangeBlockConfidence = 45.0;
+                AllowRangeBreakouts = true;
+                RangeBreakoutLookback = 20;
+                BreakoutAtrBuffer = 0.25;
 
                 // Session
                 UseSessionFilter = false;
@@ -221,13 +277,19 @@ namespace NinjaTrader.NinjaScript.Indicators
                 RiskUsd = 250.0;
                 ContractsPerEntry = 1;
                 MinAvgSepPoints = 10.0;
+                UseSignalQualityRiskScaling = true;
+                SignalQualityRiskMidThreshold = 60.0;
+                SignalQualityRiskHighThreshold = 75.0;
+                SignalQualityRiskMinMultiplier = 0.50;
+                SignalQualityRiskMidMultiplier = 0.75;
+                SignalQualityRiskHighMultiplier = 1.00;
 
                 // Visual
                 PlotDays = 5;
                 Theme = AdaptiveTrendTheme.Auto;
                 ShowSignals = true;
                 ShowFiltered = false;
-                ShowMLRejected = false;
+                ShowSignalQualityRejected = false;
                 ShowBand = true;
                 ShowFill = true;
                 ShowStrengthBg = false;
@@ -283,13 +345,12 @@ namespace NinjaTrader.NinjaScript.Indicators
                 vcSeries = new Series<double>(this);
                 macdSeries = new Series<double>(this);
                 rsiSeries = new Series<double>(this);
-                bandSeries = new Series<double>(this, MaximumBarsLookBack.Infinite);
+                bandSeries = new Series<double>(this);
                 trendSeries = new Series<double>(this);
-                mlScoreSeries = new Series<double>(this);
+                signalQualityScoreSeries = new Series<double>(this);
 
                 tpslFont = new SimpleFont("Arial", TpslFontSize());
-                signalFont = new SimpleFont("Arial", 12);
-                signalTriangleFont = new SimpleFont("Arial", 28);
+                signalFont = new SimpleFont("Arial", 11);
                 int dashFontSize = DashFontSize == AdaptiveTrendFontSize.Small ? 11 : DashFontSize == AdaptiveTrendFontSize.Normal ? 13 : 16;
                 dashFont = new SimpleFont("Consolas", dashFontSize);
                 dashAreaDark = new SolidColorBrush(Color.FromArgb(230, 0x13, 0x17, 0x22));
@@ -307,8 +368,6 @@ namespace NinjaTrader.NinjaScript.Indicators
                 macdSignalEma = EMA(macdSeries, 9);
 
                 volSma20Ind = SMA(Volume, 20);
-                volMax50Ind = MAX(Volume, 50);
-
                 htfEmaFast = EMA(Closes[1], 20);
                 htfEmaSlow = EMA(Closes[1], 50);
 
@@ -342,17 +401,49 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             smoothTR = 0; smoothDMp = 0; smoothDMm = 0; adxVal = 0;
 
-            hvBarPrice = double.NaN;
-            hvBarAge = 0;
+            vpPocPrice = double.NaN;
+            vpValueAreaHigh = double.NaN;
+            vpValueAreaLow = double.NaN;
+            vpDistToPoc = 999.0;
+            vpInValueArea = false;
 
-            adaptiveGate = MlGate;
             totalSignals = 0;
             winSignals = 0;
+            avgSignalQualityR = 0.0;
+
+            for (int i = 0; i < SqBucketCount; i++)
+            {
+                sqAdaptiveGate[i] = BaseSignalQualityGateForBucket(i);
+                sqTotal[i] = 0;
+                sqWins[i] = 0;
+                sqOutcomeR[i] = 0.0;
+            }
+
             for (int i = 0; i < PendingSlots; i++)
             {
                 pendActive[i] = false;
-                pendPrice[i] = 0; pendDir[i] = 0; pendBar[i] = 0; pendAtr[i] = 0;
+                pendResolved[i] = false;
+                pendPrice[i] = 0.0;
+                pendAtr[i] = 0.0;
+                pendSL[i] = 0.0;
+                pendTP1[i] = 0.0;
+                pendRisk[i] = 0.0;
+                pendOutcomeR[i] = 0.0;
+                pendDir[i] = 0;
+                pendBar[i] = 0;
+                pendBucket[i] = 0;
             }
+
+            for (int i = 0; i < SqScoreWindow; i++)
+            {
+                sqScores[i] = 0.0;
+                sqPasses[i] = false;
+            }
+            sqScoreIndex = 0;
+            sqScoreCount = 0;
+            sqScoreSum = 0.0;
+            sqTopPositive = "-";
+            sqTopNegative = "-";
 
             lastSignal = "-";
             barsSinceSignal = 0;
@@ -367,6 +458,8 @@ namespace NinjaTrader.NinjaScript.Indicators
             tp1Hit = false; tp2Hit = false; tp3Hit = false;
             entryBarIdx = -1;
             exitReason = "";
+            activeRiskBudgetUsd = double.NaN;
+            activeRiskMultiplier = 1.0;
 
             segmentId = 0;
             segmentStartBar = 0;
@@ -515,6 +608,523 @@ namespace NinjaTrader.NinjaScript.Indicators
                 case AdaptiveTrendLabelSize.Normal: return 12;
                 default: return 10;
             }
+        }
+
+        private int SignalQualityBucket(string regime, int dir)
+        {
+            int regimeIdx = regime == "RANGING" ? 1 : regime == "VOLATILE" ? 2 : 0;
+            int dirIdx = dir == 1 ? 0 : 1;
+            return regimeIdx * 2 + dirIdx;
+        }
+
+        private string SignalQualityBucketLabel(int bucket)
+        {
+            int regimeIdx = bucket / 2;
+            bool isLong = bucket % 2 == 0;
+            string reg = regimeIdx == 1 ? "RANGING" : regimeIdx == 2 ? "VOLATILE" : "TRENDING";
+            return reg + " " + (isLong ? "LONG" : "SHORT");
+        }
+
+        private double BaseSignalQualityGateForBucket(int bucket)
+        {
+            int regimeIdx = bucket / 2;
+            bool isLong = bucket % 2 == 0;
+
+            double gate = SignalQualityGate;
+
+            if (UseRegimeQualityGates)
+            {
+                if (regimeIdx == 0)
+                    gate = SignalQualityGateTrending;
+                else if (regimeIdx == 1)
+                    gate = SignalQualityGateRanging;
+                else
+                    gate = SignalQualityGateVolatile;
+            }
+
+            if (UseDirectionalQualityGates)
+            {
+                double directionalGate = isLong ? SignalQualityGateLong : SignalQualityGateShort;
+                gate += directionalGate - SignalQualityGate;
+            }
+
+            return Clamp(gate, 10.0, 90.0);
+        }
+
+        private void EnsureSignalQualityGatesInitialized()
+        {
+            bool needsInit = true;
+            for (int i = 0; i < SqBucketCount; i++)
+            {
+                if (sqAdaptiveGate[i] > 0)
+                {
+                    needsInit = false;
+                    break;
+                }
+            }
+
+            if (!needsInit)
+                return;
+
+            for (int i = 0; i < SqBucketCount; i++)
+                sqAdaptiveGate[i] = BaseSignalQualityGateForBucket(i);
+        }
+
+        private double[] SignalQualityWeightsForDirectionAndRegime(int dir, string regime)
+        {
+            double[] w = new double[13];
+
+            if (dir == -1 && UseDirectionalQualityWeights)
+            {
+                w[0] = W1MomentumShort; w[1] = W2VolumeShort; w[2] = W3TrendShort; w[3] = W4VolatilityShort;
+                w[4] = W5DistanceShort; w[5] = W6MacdShort; w[6] = W7StructureShort; w[7] = W8RegimeShort;
+                w[8] = W9MtfShort; w[9] = W10AdxShort; w[10] = W11DivergenceShort; w[11] = W12VolProfileShort;
+                w[12] = W13SessionShort;
+            }
+            else
+            {
+                w[0] = W1Momentum; w[1] = W2Volume; w[2] = W3Trend; w[3] = W4Volatility;
+                w[4] = W5Distance; w[5] = W6Macd; w[6] = W7Structure; w[7] = W8Regime;
+                w[8] = W9Mtf; w[9] = W10Adx; w[10] = W11Divergence; w[11] = W12VolProfile;
+                w[12] = W13Session;
+            }
+
+            if (UseRegimeWeightProfiles)
+            {
+                if (regime == "TRENDING")
+                {
+                    w[0] *= 1.10;   // Momentum
+                    w[2] *= 1.25;   // Efficiency Ratio / trend persistence
+                    w[4] *= 1.10;   // Band distance
+                    w[6] *= 1.15;   // Price structure
+                    w[8] *= 1.20;   // MTF confluence
+                    w[9] *= 1.20;   // ADX
+                    w[11] *= 0.85;  // Volume profile zone
+                }
+                else if (regime == "RANGING")
+                {
+                    w[0] *= 0.90;
+                    w[2] *= 0.65;
+                    w[3] *= 1.10;   // Keep volatility shock penalty important
+                    w[4] *= 0.75;
+                    w[6] *= 0.85;
+                    w[8] *= 0.85;
+                    w[9] *= 0.70;
+                    w[10] *= 1.25;  // Divergences matter more in ranges
+                    w[11] *= 1.25;  // Volume profile zones matter more in ranges
+                    w[12] *= 1.10;
+                }
+                else if (regime == "VOLATILE")
+                {
+                    w[1] *= 1.10;   // Volume confirmation
+                    w[2] *= 0.90;
+                    w[3] *= 1.35;   // Stronger volatility shock penalty
+                    w[4] *= 0.85;
+                    w[6] *= 1.10;
+                    w[8] *= 1.15;
+                    w[9] *= 1.15;
+                    w[12] *= 1.15;
+                }
+            }
+
+            return w;
+        }
+
+        private double SignalQualityRiskMultiplier(double score)
+        {
+            if (!UseSignalQualityRiskScaling)
+                return 1.0;
+
+            double mid = Math.Min(SignalQualityRiskMidThreshold, SignalQualityRiskHighThreshold);
+            double high = Math.Max(SignalQualityRiskMidThreshold, SignalQualityRiskHighThreshold);
+
+            if (score >= high)
+                return Clamp(SignalQualityRiskHighMultiplier, 0.05, 2.0);
+            if (score >= mid)
+                return Clamp(SignalQualityRiskMidMultiplier, 0.05, 2.0);
+            return Clamp(SignalQualityRiskMinMultiplier, 0.05, 2.0);
+        }
+
+        private void UpdateSignalQualityStats(double score, bool pass)
+        {
+            if (sqScoreCount == SqScoreWindow)
+                sqScoreSum -= sqScores[sqScoreIndex];
+            else
+                sqScoreCount++;
+
+            sqScores[sqScoreIndex] = score;
+            sqPasses[sqScoreIndex] = pass;
+            sqScoreSum += score;
+
+            sqScoreIndex++;
+            if (sqScoreIndex >= SqScoreWindow)
+                sqScoreIndex = 0;
+        }
+
+        private double SignalQualityAverage()
+        {
+            return sqScoreCount > 0 ? sqScoreSum / sqScoreCount : 0.0;
+        }
+
+        private double SignalQualityPassRate()
+        {
+            if (sqScoreCount <= 0)
+                return 0.0;
+
+            int pass = 0;
+            for (int i = 0; i < sqScoreCount; i++)
+                if (sqPasses[i])
+                    pass++;
+
+            return pass / (double)sqScoreCount * 100.0;
+        }
+
+        private double SignalQualityPercentile(double pct)
+        {
+            if (sqScoreCount <= 0)
+                return 0.0;
+
+            double[] tmp = new double[sqScoreCount];
+            for (int i = 0; i < sqScoreCount; i++)
+                tmp[i] = sqScores[i];
+
+            Array.Sort(tmp);
+
+            double pos = Clamp(pct, 0.0, 1.0) * (sqScoreCount - 1);
+            int lo = (int)Math.Floor(pos);
+            int hi = (int)Math.Ceiling(pos);
+            if (lo == hi)
+                return tmp[lo];
+
+            return Lerp(tmp[lo], tmp[hi], pos - lo);
+        }
+
+        private void UpdateSignalQualityContribs(double[] features, double[] weights)
+        {
+            double[] contrib = new double[Math.Min(features.Length, weights.Length)];
+            for (int i = 0; i < contrib.Length; i++)
+                contrib[i] = weights[i] * (features[i] - 50.0);
+
+            sqTopPositive = BuildSignalQualityContribList(contrib, true);
+            sqTopNegative = BuildSignalQualityContribList(contrib, false);
+        }
+
+        private string BuildSignalQualityContribList(double[] contrib, bool positive)
+        {
+            StringBuilder sb = new StringBuilder();
+            bool[] picked = new bool[contrib.Length];
+            int found = 0;
+
+            for (int rank = 0; rank < 3; rank++)
+            {
+                int bestIdx = -1;
+                double best = positive ? double.MinValue : double.MaxValue;
+
+                for (int i = 0; i < contrib.Length; i++)
+                {
+                    if (picked[i])
+                        continue;
+
+                    if (positive)
+                    {
+                        if (contrib[i] > 0.05 && contrib[i] > best)
+                        {
+                            best = contrib[i];
+                            bestIdx = i;
+                        }
+                    }
+                    else
+                    {
+                        if (contrib[i] < -0.05 && contrib[i] < best)
+                        {
+                            best = contrib[i];
+                            bestIdx = i;
+                        }
+                    }
+                }
+
+                if (bestIdx < 0)
+                    break;
+
+                picked[bestIdx] = true;
+                if (found > 0)
+                    sb.Append(", ");
+                sb.Append(SqFeatureNames[bestIdx]);
+                sb.Append(" ");
+                sb.Append(contrib[bestIdx] >= 0 ? "+" : "");
+                sb.Append(contrib[bestIdx].ToString("0.0"));
+                found++;
+            }
+
+            return found > 0 ? sb.ToString() : "-";
+        }
+
+        private double CalcVolumeProfileScore(int lookback, int bins, double valueAreaPct, double atr)
+        {
+            vpPocPrice = double.NaN;
+            vpValueAreaHigh = double.NaN;
+            vpValueAreaLow = double.NaN;
+            vpDistToPoc = 999.0;
+            vpInValueArea = false;
+
+            int bars = Math.Min(Math.Max(lookback, 10), CurrentBar + 1);
+            bins = (int)Clamp(bins, 12, 100);
+
+            if (bars < 10 || atr <= 0)
+                return 50.0;
+
+            double lo = double.MaxValue;
+            double hi = double.MinValue;
+            for (int i = 0; i < bars; i++)
+            {
+                lo = Math.Min(lo, Low[i]);
+                hi = Math.Max(hi, High[i]);
+            }
+
+            if (hi <= lo || double.IsNaN(hi) || double.IsNaN(lo))
+                return 50.0;
+
+            double width = Math.Max(TickSize, (hi - lo) / bins);
+            if (width <= 0)
+                return 50.0;
+
+            double[] binVol = new double[bins];
+            double totalVol = 0.0;
+
+            for (int i = 0; i < bars; i++)
+            {
+                double vol = Math.Max((double)Volume[i], 0.0);
+                if (vol <= 0)
+                    continue;
+
+                int first = (int)Math.Floor((Low[i] - lo) / width);
+                int last = (int)Math.Floor((High[i] - lo) / width);
+                first = (int)Clamp(first, 0, bins - 1);
+                last = (int)Clamp(last, 0, bins - 1);
+                if (last < first)
+                {
+                    int tmp = first;
+                    first = last;
+                    last = tmp;
+                }
+
+                int count = Math.Max(1, last - first + 1);
+                double part = vol / count;
+                for (int b = first; b <= last; b++)
+                    binVol[b] += part;
+
+                totalVol += vol;
+            }
+
+            if (totalVol <= 0)
+                return 50.0;
+
+            int pocIdx = 0;
+            double pocVol = binVol[0];
+            for (int b = 1; b < bins; b++)
+            {
+                if (binVol[b] > pocVol)
+                {
+                    pocVol = binVol[b];
+                    pocIdx = b;
+                }
+            }
+
+            vpPocPrice = lo + (pocIdx + 0.5) * width;
+            vpDistToPoc = Math.Abs(Close[0] - vpPocPrice) / Math.Max(atr, 1e-10);
+
+            bool[] included = new bool[bins];
+            double targetVol = totalVol * Clamp(valueAreaPct / 100.0, 0.50, 0.95);
+            double accVol = 0.0;
+            int minIdx = pocIdx;
+            int maxIdx = pocIdx;
+
+            while (accVol < targetVol)
+            {
+                int bestIdx = -1;
+                double bestVol = double.MinValue;
+
+                for (int b = 0; b < bins; b++)
+                {
+                    if (!included[b] && binVol[b] > bestVol)
+                    {
+                        bestVol = binVol[b];
+                        bestIdx = b;
+                    }
+                }
+
+                if (bestIdx < 0 || bestVol <= 0)
+                    break;
+
+                included[bestIdx] = true;
+                accVol += bestVol;
+                minIdx = Math.Min(minIdx, bestIdx);
+                maxIdx = Math.Max(maxIdx, bestIdx);
+            }
+
+            vpValueAreaLow = lo + minIdx * width;
+            vpValueAreaHigh = lo + (maxIdx + 1) * width;
+            vpInValueArea = Close[0] >= vpValueAreaLow && Close[0] <= vpValueAreaHigh;
+
+            double score = Clamp(100.0 - vpDistToPoc * 35.0, 0.0, 100.0);
+            if (vpInValueArea)
+                score = Math.Max(score, 70.0);
+            if (vpDistToPoc <= 0.50)
+                score = Math.Max(score, 90.0);
+
+            return score;
+        }
+
+        private void RegisterSignalQualityEvaluation(int dir, double entry, double atr, double band, string regime)
+        {
+            int slot = -1;
+            for (int i = 0; i < PendingSlots; i++)
+            {
+                if (!pendActive[i])
+                {
+                    slot = i;
+                    break;
+                }
+            }
+
+            if (slot < 0)
+            {
+                slot = 0;
+                for (int i = 1; i < PendingSlots; i++)
+                    if (pendBar[i] < pendBar[slot])
+                        slot = i;
+            }
+
+            double sl = CalcSL(dir, entry, atr, band);
+            if (double.IsNaN(sl) || Math.Abs(entry - sl) < TickSize)
+                sl = dir == 1 ? entry - atr : entry + atr;
+
+            double risk = Math.Abs(entry - sl);
+            if (risk <= 0)
+                risk = Math.Max(atr, TickSize);
+
+            pendPrice[slot] = entry;
+            pendDir[slot] = dir;
+            pendBar[slot] = CurrentBar;
+            pendAtr[slot] = atr;
+            pendSL[slot] = sl;
+            pendTP1[slot] = dir == 1 ? entry + Tp1Mult * atr : entry - Tp1Mult * atr;
+            pendRisk[slot] = risk;
+            pendOutcomeR[slot] = 0.0;
+            pendBucket[slot] = SignalQualityBucket(regime, dir);
+            pendActive[slot] = true;
+            pendResolved[slot] = false;
+        }
+
+        private bool UpdatePendingSignalQualityEvaluations()
+        {
+            const double decayRate = 0.98;
+
+            bool anyMatured = false;
+            int[] newTotal = new int[SqBucketCount];
+            int[] newWins = new int[SqBucketCount];
+            double[] newR = new double[SqBucketCount];
+
+            for (int i = 0; i < PendingSlots; i++)
+            {
+                if (!pendActive[i])
+                    continue;
+
+                bool maturedByAge = CurrentBar - pendBar[i] >= EvalHorizon;
+                bool resolvedNow = false;
+                double outcomeR = 0.0;
+                bool win = false;
+
+                if (!pendResolved[i])
+                {
+                    bool slHit = pendDir[i] == 1 ? Low[0] <= pendSL[i] : High[0] >= pendSL[i];
+                    bool tp1HitPending = pendDir[i] == 1 ? High[0] >= pendTP1[i] : Low[0] <= pendTP1[i];
+
+                    if (slHit && tp1HitPending)
+                    {
+                        // Bar-close data cannot know intrabar order. Use conservative labeling to avoid inflated learning stats.
+                        outcomeR = -1.0;
+                        resolvedNow = true;
+                        win = false;
+                    }
+                    else if (tp1HitPending)
+                    {
+                        outcomeR = 1.0;
+                        resolvedNow = true;
+                        win = true;
+                    }
+                    else if (slHit)
+                    {
+                        outcomeR = -1.0;
+                        resolvedNow = true;
+                        win = false;
+                    }
+                }
+
+                if (!resolvedNow && maturedByAge)
+                {
+                    double pm = pendDir[i] == 1 ? Close[0] - pendPrice[i] : pendPrice[i] - Close[0];
+                    outcomeR = Clamp(SafeDiv(pm, pendRisk[i], 0.0), -1.0, 1.0);
+                    win = false; // TP1-before-SL is the primary label; positive drift is tracked through avg R.
+                    resolvedNow = true;
+                }
+
+                if (!resolvedNow)
+                    continue;
+
+                int bucket = (int)Clamp(pendBucket[i], 0, SqBucketCount - 1);
+                newTotal[bucket]++;
+                if (win)
+                    newWins[bucket]++;
+                newR[bucket] += outcomeR;
+
+                pendActive[i] = false;
+                pendResolved[i] = false;
+                anyMatured = true;
+            }
+
+            if (!anyMatured)
+                return false;
+
+            for (int b = 0; b < SqBucketCount; b++)
+            {
+                if (newTotal[b] <= 0)
+                    continue;
+
+                sqTotal[b] = (int)Math.Round(sqTotal[b] * decayRate) + newTotal[b];
+                sqWins[b] = (int)Math.Round(sqWins[b] * decayRate) + newWins[b];
+                sqOutcomeR[b] = sqOutcomeR[b] * decayRate + newR[b];
+
+                if (SelfLearn && sqTotal[b] >= 8)
+                {
+                    double wr = SafeDiv(sqWins[b], sqTotal[b], 0.5);
+                    double avgR = SafeDiv(sqOutcomeR[b], sqTotal[b], 0.0);
+
+                    if (wr > 0.70 && avgR > 0.10)
+                        sqAdaptiveGate[b] = Math.Max(20.0, sqAdaptiveGate[b] - 1.5);
+                    else if (wr < 0.50 || avgR < 0.0)
+                        sqAdaptiveGate[b] = Math.Min(85.0, sqAdaptiveGate[b] + 1.5);
+                }
+            }
+
+            UpdateAggregateSignalQualityLearningStats();
+            return true;
+        }
+
+        private void UpdateAggregateSignalQualityLearningStats()
+        {
+            totalSignals = 0;
+            winSignals = 0;
+            double totalR = 0.0;
+
+            for (int b = 0; b < SqBucketCount; b++)
+            {
+                totalSignals += sqTotal[b];
+                winSignals += sqWins[b];
+                totalR += sqOutcomeR[b];
+            }
+
+            avgSignalQualityR = totalSignals > 0 ? totalR / totalSignals : 0.0;
         }
 
         protected override void OnBarUpdate()
@@ -703,16 +1313,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             // ── Volume profile ──
             bool hasVolume = Volume[0] > 0;
             double volSma20 = volSma20Ind[0];
-            double volMax50 = volMax50Ind[0];
-            hvBarAge++;
-            if (hasVolume && Volume[0] >= volMax50)
-            {
-                hvBarPrice = hl2; hvBarAge = 0;
-            }
-            if (hvBarAge > 50)
-                hvBarPrice = double.NaN;
-            double distToHV = double.IsNaN(hvBarPrice) ? 999.0 : Math.Abs(Close[0] - hvBarPrice) / Math.Max(atrVal, 1e-10);
-            bool nearVolZone = distToHV < 1.5;
+            double f12VolProfile = CalcVolumeProfileScore(VolumeProfileLookback, VolumeProfileBins, VolumeValueAreaPct, atrVal);
 
             // ── Session quality ──
             int currentHour = GetSessionHour();
@@ -739,17 +1340,43 @@ namespace NinjaTrader.NinjaScript.Indicators
                     inKillZone = currentHour >= SessionKillStart || currentHour <= SessionKillEnd;
             }
 
+            // ── Sideways / Chop filter ──
+            bool regimeSaysRange = regime == "RANGING" && regimeConfidence >= RangeBlockConfidence;
+            bool adxWeak = adxVal < MinTrendAdx;
+            bool erWeak = erSmooth < MinEfficiencyRatio;
+
+            // Block only when at least two independent conditions agree.
+            // This keeps the filter from killing early trend reversals just because ADX is still warming up.
+            bool chopBlock = UseSidewaysFilter && (
+                (regimeSaysRange && adxWeak) ||
+                (regimeSaysRange && erWeak) ||
+                (adxWeak && erWeak));
+
+            // Optional exception: allow a real range breakout so the first trend leg is not missed.
+            int rbLen = Math.Min(RangeBreakoutLookback, Math.Max(CurrentBar - 2, 1));
+            bool enoughRangeBars = CurrentBar > rbLen + 2;
+
+            double prevRangeHigh = enoughRangeBars ? HighestVal(High, 1, rbLen) : High[0];
+            double prevRangeLow = enoughRangeBars ? LowestVal(Low, 1, rbLen) : Low[0];
+
+            bool bullBreakout = enoughRangeBars && Close[0] > prevRangeHigh + BreakoutAtrBuffer * atrVal;
+            bool bearBreakout = enoughRangeBars && Close[0] < prevRangeLow - BreakoutAtrBuffer * atrVal;
+            bool rangeBreakoutOk = AllowRangeBreakouts && chopBlock && (trendDir == 1 ? bullBreakout : bearBreakout);
+            bool sidewaysOk = !UseSidewaysFilter || !chopBlock || rangeBreakoutOk;
+
             // ── Classic filters ──
             bool momentumOk = !UseMomentum || (trendDir == 1 ? rsiVal >= effectiveRsiThresh : rsiVal <= 100.0 - effectiveRsiThresh);
             bool volumeOk = !UseVolumeFilter || !hasVolume || Volume[0] > volSma20 * VolMultiplier;
             bool sessionOk = !UseSessionFilter || !inKillZone;
-            bool classicFiltersOk = momentumOk && volumeOk && sessionOk && !mtfHardBlock;
+            bool classicFiltersOk = momentumOk && volumeOk && sessionOk && sidewaysOk && !mtfHardBlock;
 
-            // ── ML features + scoring ──
+            // ── Signal Quality Engine features + scoring ──
+            EnsureSignalQualityGatesInitialized();
+
             double f1 = Clamp((trendDir == 1 ? (rsiVal - 50.0) * 2.0 : (50.0 - rsiVal) * 2.0) + 50.0, 0.0, 100.0);
             double f2 = hasVolume && volSma20 > 0 ? Clamp(SafeDiv(Volume[0], volSma20, 1.0) * 50.0, 0.0, 100.0) : 50.0;
             double f3 = erSmooth * 100.0;
-            double f4 = Clamp((2.0 - volCluster) * 50.0, 0.0, 100.0);
+            double f4 = Clamp((volCluster - 1.0) * 100.0, 0.0, 100.0); // volatility shock: higher = riskier
             double bandDist = trendDir == 1
                 ? SafeDiv(Close[0] - stBand, Math.Max(atrVal, 1e-10), 0.0)
                 : SafeDiv(stBand - Close[0], Math.Max(atrVal, 1e-10), 0.0);
@@ -762,7 +1389,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             double f7 = trendDir == 1
                 ? 20.0 + (hh > hhPrev ? 30.0 : 0.0) + (ll > llPrev ? 30.0 : 0.0)
                 : 20.0 + (ll < llPrev ? 30.0 : 0.0) + (hh < hhPrev ? 30.0 : 0.0);
-            double f8 = regimeConfidence;
+            double f8 = regime == "TRENDING" ? regimeConfidence : regime == "RANGING" ? 100.0 - regimeConfidence : 50.0;
             double f9 = !UseMTF ? 50.0 : mtfAligned ? 100.0 : 0.0;
             double f10 = Clamp(adxVal * 2.5, 0.0, 100.0);
             double f11 = 50.0;
@@ -770,79 +1397,58 @@ namespace NinjaTrader.NinjaScript.Indicators
             else if (trendDir == -1 && bearDivergence) f11 = 100.0;
             else if (trendDir == 1 && bearDivergence) f11 = 10.0;
             else if (trendDir == -1 && bullDivergence) f11 = 10.0;
-            double f12 = nearVolZone ? 100.0 : Clamp((3.0 - distToHV) / 3.0 * 100.0, 0.0, 50.0);
+            double f12 = f12VolProfile;
             double f13 = isDailyOrAbove ? 50.0 : sessionScore;
 
-            double rawMLScore = W1Momentum * f1 + W2Volume * f2 + W3Trend * f3 + W4Volatility * f4
-                + W5Distance * f5 + W6Macd * f6 + W7Structure * f7 + W8Regime * f8 + W9Mtf * f9
-                + W10Adx * f10 + W11Divergence * f11 + W12VolProfile * f12 + W13Session * f13 + WBias;
+            double[] qualityFeatures =
+            {
+                f1, f2, f3, f4, f5, f6, f7, f8, f9, f10, f11, f12, f13
+            };
 
-            double weightSum = Math.Abs(W1Momentum) + Math.Abs(W2Volume) + Math.Abs(W3Trend)
-                + Math.Abs(W4Volatility) + Math.Abs(W5Distance) + Math.Abs(W6Macd)
-                + Math.Abs(W7Structure) + Math.Abs(W8Regime) + Math.Abs(W9Mtf)
-                + Math.Abs(W10Adx) + Math.Abs(W11Divergence) + Math.Abs(W12VolProfile)
-                + Math.Abs(W13Session);
+            double[] qualityWeights = SignalQualityWeightsForDirectionAndRegime(trendDir, regime);
+            double rawQualityScore = WBias;
+            double weightSum = 0.0;
 
-            double normalizedScore = weightSum > 0 ? rawMLScore / weightSum : 50.0;
-            double mlScore = Sigmoid100(normalizedScore, 50.0, 0.08);
+            for (int i = 0; i < qualityFeatures.Length; i++)
+            {
+                rawQualityScore += qualityWeights[i] * qualityFeatures[i];
+                weightSum += Math.Abs(qualityWeights[i]);
+            }
+
+            if (trendDir == -1 && UseDirectionalQualityWeights)
+                rawQualityScore += WBiasShort;
+
+            double normalizedScore = weightSum > 0 ? rawQualityScore / weightSum : 50.0;
+            double qualityScore = Sigmoid100(normalizedScore, 50.0, 0.08);
+
+            int signalQualityBucket = SignalQualityBucket(regime, trendDir);
+            double effectiveGate = SelfLearn ? sqAdaptiveGate[signalQualityBucket] : BaseSignalQualityGateForBucket(signalQualityBucket);
+            bool qualityPassForStats = qualityScore >= effectiveGate;
 
             trendSeries[0] = trendDir;
-            mlScoreSeries[0] = mlScore;
+            signalQualityScoreSeries[0] = qualityScore;
 
-            // ── Self-learning ──
-            const double decayRate = 0.98;
-            bool anyMatured = false;
-            int newWins = 0, newTotal = 0;
-            for (int i = 0; i < PendingSlots; i++)
-            {
-                if (!pendActive[i] || CurrentBar - pendBar[i] < EvalHorizon)
-                    continue;
-                double pm = pendDir[i] == 1 ? Close[0] - pendPrice[i] : pendPrice[i] - Close[0];
-                bool win = pm > 0.5 * pendAtr[i];
-                pendActive[i] = false;
-                anyMatured = true;
-                newTotal++;
-                if (win) newWins++;
-            }
-            if (anyMatured)
-            {
-                totalSignals = (int)Math.Round(totalSignals * decayRate);
-                winSignals = (int)Math.Round(winSignals * decayRate);
-                totalSignals += newTotal;
-                winSignals += newWins;
-            }
+            UpdateSignalQualityContribs(qualityFeatures, qualityWeights);
+            UpdatePendingSignalQualityEvaluations();
+            if (SelfLearn)
+                effectiveGate = sqAdaptiveGate[signalQualityBucket];
 
-            if (SelfLearn && totalSignals >= 8)
-            {
-                double wr = SafeDiv(winSignals, totalSignals, 0.5);
-                if (wr > 0.70)
-                    adaptiveGate = Math.Max(20.0, adaptiveGate - 1.5);
-                else if (wr < 0.50)
-                    adaptiveGate = Math.Min(85.0, adaptiveGate + 1.5);
-            }
-            double effectiveGate = SelfLearn ? adaptiveGate : MlGate;
+            qualityPassForStats = qualityScore >= effectiveGate;
+            UpdateSignalQualityStats(qualityScore, qualityPassForStats);
 
             // ── Signal logic ──
             bool classicBuy = rawFlip && trendDir == 1 && classicFiltersOk && isWarmedUp;
             bool classicSell = rawFlip && trendDir == -1 && classicFiltersOk && isWarmedUp;
-            bool mlPass = !UseMLFilter || mlScore >= effectiveGate;
+            bool qualityPass = !UseSignalQualityFilter || qualityScore >= effectiveGate;
 
-            bool confirmedBuy = classicBuy && mlPass;
-            bool confirmedSell = classicSell && mlPass;
-            bool mlRejectedBuy = classicBuy && !mlPass;
-            bool mlRejectedSell = classicSell && !mlPass;
+            bool confirmedBuy = classicBuy && qualityPass;
+            bool confirmedSell = classicSell && qualityPass;
+            bool qualityRejectedBuy = classicBuy && !qualityPass;
+            bool qualityRejectedSell = classicSell && !qualityPass;
             bool filteredFlip = rawFlip && !classicFiltersOk && isWarmedUp;
 
             if (confirmedBuy || confirmedSell)
-            {
-                for (int i = 0; i < PendingSlots; i++)
-                {
-                    if (pendActive[i]) continue;
-                    pendPrice[i] = Close[0]; pendDir[i] = trendDir; pendBar[i] = CurrentBar;
-                    pendAtr[i] = atrVal; pendActive[i] = true;
-                    break;
-                }
-            }
+                RegisterSignalQualityEvaluation(trendDir, Close[0], atrVal, stBand, regime);
 
             barsSinceSignal++;
             if (confirmedBuy) { lastSignal = "LONG"; barsSinceSignal = 0; }
@@ -876,20 +1482,14 @@ namespace NinjaTrader.NinjaScript.Indicators
                         tp1Hit = true; tp1JustHit = true;
                         RemoveDrawObject("AT_TP1Lbl");
                         if (tpslLinesDrawn)
-                        {
-                            RemoveDrawObject("AT_TP1Ray");
-                            Draw.Line(this, "AT_TP1Line", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp1Price, 0, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
-                        }
+                            Draw.Line(this, "AT_TP1", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp1Price, 0, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     }
                     if (TpLevels >= 2 && !tp2Hit && !double.IsNaN(tp2Price) && (posDir == 1 ? High[0] >= tp2Price : Low[0] <= tp2Price))
                     {
                         tp2Hit = true; tp2JustHit = true;
                         RemoveDrawObject("AT_TP2Lbl");
                         if (tpslLinesDrawn)
-                        {
-                            RemoveDrawObject("AT_TP2Ray");
-                            Draw.Line(this, "AT_TP2Line", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp2Price, 0, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
-                        }
+                            Draw.Line(this, "AT_TP2", false, CurrentBar - Math.Max(entryBarIdx, firstDrawBar), tp2Price, 0, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     }
                     if (TpLevels >= 3 && !tp3Hit && !double.IsNaN(tp3Price) && (posDir == 1 ? High[0] >= tp3Price : Low[0] <= tp3Price))
                     {
@@ -947,22 +1547,26 @@ namespace NinjaTrader.NinjaScript.Indicators
                 lastAvgCount = -1;
 
                 double entryGap = Math.Abs(newEntry - newSL);
+                activeRiskMultiplier = SignalQualityRiskMultiplier(qualityScore);
+                activeRiskBudgetUsd = Math.Max(RiskUsd * activeRiskMultiplier, 1.0);
+
                 entryContracts = entryGap > 0 && usdPerPointEff > 0
-                    ? Math.Max(ContractsPerEntry, (int)Math.Floor(RiskUsd / (entryGap * usdPerPointEff)))
+                    ? Math.Max(ContractsPerEntry, (int)Math.Floor(activeRiskBudgetUsd / (entryGap * usdPerPointEff)))
                     : ContractsPerEntry;
 
                 double entryRisk = entryGap * entryContracts * usdPerPointEff;
                 moneyStopPrice = double.NaN;
-                if (entryRisk > RiskUsd && usdPerPointEff > 0)
+                if (entryRisk > activeRiskBudgetUsd && usdPerPointEff > 0)
                 {
-                    double maxPts = RiskUsd / (entryContracts * usdPerPointEff);
+                    double maxPts = activeRiskBudgetUsd / (entryContracts * usdPerPointEff);
                     moneyStopPrice = Instrument.MasterInstrument.RoundToTickSize(
                         newDir == 1 ? newEntry - maxPts : newEntry + maxPts);
 
                     if (canDraw)
                     {
                         double warnY = newDir == 1 ? High[0] + atrVal * 2.0 : Low[0] - atrVal * 2.0;
-                        Draw.Text(this, "AT_RiskWarn", "RISK $" + entryRisk.ToString("0") + " > $" + RiskUsd.ToString("0"),
+                        Draw.Text(this, "AT_RiskWarn", "RISK $" + entryRisk.ToString("0") + " > $" + activeRiskBudgetUsd.ToString("0") +
+                            " (" + activeRiskMultiplier.ToString("0.##") + "x SQE)",
                             0, warnY, Brushes.OrangeRed);
                     }
                 }
@@ -1001,11 +1605,11 @@ namespace NinjaTrader.NinjaScript.Indicators
                 {
                     Draw.Ray(this, "AT_Entry", false, startAgo, entryPrice, -1, entryPrice, EntryLineBrush(), DashStyleHelper.Dot, 1);
                     if (!tp1Hit)
-                        Draw.Ray(this, "AT_TP1Ray", false, startAgo, tp1Price, -1, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                        Draw.Ray(this, "AT_TP1", false, startAgo, tp1Price, -1, tp1Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     if (TpLevels >= 2 && !double.IsNaN(tp2Price) && !tp2Hit)
-                        Draw.Ray(this, "AT_TP2Ray", false, startAgo, tp2Price, -1, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                        Draw.Ray(this, "AT_TP2", false, startAgo, tp2Price, -1, tp2Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     if (TpLevels >= 3 && !double.IsNaN(tp3Price) && !tp3Hit)
-                        Draw.Ray(this, "AT_TP3Ray", false, startAgo, tp3Price, -1, tp3Price, TpLineBrush(), DashStyleHelper.Solid, 1);
+                        Draw.Ray(this, "AT_TP3", false, startAgo, tp3Price, -1, tp3Price, TpLineBrush(), DashStyleHelper.Solid, 1);
                     tpslLinesDrawn = true;
                 }
 
@@ -1055,7 +1659,8 @@ namespace NinjaTrader.NinjaScript.Indicators
                 bool riskFree = posDir == 1 ? slPrice >= entryPrice : slPrice <= entryPrice;
                 double gapPoints = Math.Abs(entryPrice - slPrice);
                 double initialRisk = gapPoints * entryContracts * usdPerPointEff;
-                double remainingRisk = RiskUsd - initialRisk;
+                double riskBudgetForAdds = double.IsNaN(activeRiskBudgetUsd) ? RiskUsd : activeRiskBudgetUsd;
+                double remainingRisk = riskBudgetForAdds - initialRisk;
 
                 if (riskFree || remainingRisk <= 0 || usdPerPointEff <= 0)
                 {
@@ -1176,31 +1781,21 @@ namespace NinjaTrader.NinjaScript.Indicators
                     Draw.Dot(this, "AT_Filt" + CurrentBar, false, 0, stBand, Brushes.Gray);
 
                 if (ShowSignals && confirmedBuy)
-                {
-                    double markerPrice = High[0] + SignalMarkerPointOffset;
-                    Draw.Text(this, "AT_LongTri" + CurrentBar, false, "\u25BC", 0, markerPrice, 0, BullColor,
-                        signalTriangleFont, System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                    Draw.Text(this, "AT_Long" + CurrentBar, false, "L", 0, markerPrice, 0, Brushes.Black,
-                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
+                    Draw.Text(this, "AT_Long" + CurrentBar, false, "Long", 0, High[0] + atrVal * 0.8, 0, Brushes.White,
+                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BullColor, 100);
                 if (ShowSignals && confirmedSell)
-                {
-                    double markerPrice = Low[0] - SignalMarkerPointOffset;
-                    Draw.Text(this, "AT_ShortTri" + CurrentBar, false, "\u25B2", 0, markerPrice, 0, BearColor,
-                        signalTriangleFont, System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                    Draw.Text(this, "AT_Short" + CurrentBar, false, "S", 0, markerPrice, 0, Brushes.Black,
-                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, Brushes.Transparent, 0);
-                }
+                    Draw.Text(this, "AT_Short" + CurrentBar, false, "Short", 0, Low[0] - atrVal * 0.8, 0, Brushes.White,
+                        signalFont, System.Windows.TextAlignment.Center, Brushes.Transparent, BearColor, 100);
 
-                if (ShowMLDebug && confirmedBuy)
-                    Draw.Text(this, "AT_MLDbg" + CurrentBar, mlScore.ToString("0.0"), 0, High[0] + atrVal * 1.6, BullColor);
-                if (ShowMLDebug && confirmedSell)
-                    Draw.Text(this, "AT_MLDbg" + CurrentBar, mlScore.ToString("0.0"), 0, Low[0] - atrVal * 1.6, BearColor);
+                if (ShowSignalQualityDebug && confirmedBuy)
+                    Draw.Text(this, "AT_SQEDbg" + CurrentBar, qualityScore.ToString("0.0"), 0, High[0] + atrVal * 1.6, BullColor);
+                if (ShowSignalQualityDebug && confirmedSell)
+                    Draw.Text(this, "AT_SQEDbg" + CurrentBar, qualityScore.ToString("0.0"), 0, Low[0] - atrVal * 1.6, BearColor);
 
-                if (ShowMLRejected && mlRejectedBuy)
-                    Draw.TriangleUp(this, "AT_MLRej" + CurrentBar, false, 0, Low[0] - atrVal * 0.5, Brushes.Gold);
-                if (ShowMLRejected && mlRejectedSell)
-                    Draw.TriangleDown(this, "AT_MLRej" + CurrentBar, false, 0, High[0] + atrVal * 0.5, Brushes.Gold);
+                if (ShowSignalQualityRejected && qualityRejectedBuy)
+                    Draw.TriangleUp(this, "AT_SQERej" + CurrentBar, false, 0, Low[0] - atrVal * 0.5, Brushes.Gold);
+                if (ShowSignalQualityRejected && qualityRejectedSell)
+                    Draw.TriangleDown(this, "AT_SQERej" + CurrentBar, false, 0, High[0] + atrVal * 0.5, Brushes.Gold);
 
                 if (ShowDivergence && bullDivergence)
                     Draw.Dot(this, "AT_BullDiv" + CurrentBar, false, 0, Low[0] - atrVal * 0.3, BullColor);
@@ -1224,11 +1819,11 @@ namespace NinjaTrader.NinjaScript.Indicators
 
             // ── Dashboard ──
             if (ShowDashboard && (State == State.Realtime || CurrentBar >= Count - 3))
-                DrawDashboard(trendDir, strengthVal, strengthStr, mlScore, effectiveGate, htfTrend, mtfAligned, regime, regimeConfidence);
+                DrawDashboard(trendDir, strengthVal, strengthStr, qualityScore, effectiveGate, htfTrend, mtfAligned, regime, regimeConfidence);
 
             // ── Alerts ──
             if (State == State.Realtime)
-                FireAlerts(confirmedBuy, confirmedSell, tp1JustHit, tp2JustHit, posJustClosed, mlScore, htfTrend, regime);
+                FireAlerts(confirmedBuy, confirmedSell, tp1JustHit, tp2JustHit, posJustClosed, qualityScore, htfTrend, regime);
         }
 
         private double CalcSL(int dir, double entry, double atr, double band)
@@ -1244,9 +1839,9 @@ namespace NinjaTrader.NinjaScript.Indicators
         {
             RemoveDrawObject("AT_Entry"); RemoveDrawObject("AT_EntryLbl");
             RemoveDrawObject("AT_SL"); RemoveDrawObject("AT_SLLbl");
-            RemoveDrawObject("AT_TP1"); RemoveDrawObject("AT_TP1Ray"); RemoveDrawObject("AT_TP1Line"); RemoveDrawObject("AT_TP1Lbl");
-            RemoveDrawObject("AT_TP2"); RemoveDrawObject("AT_TP2Ray"); RemoveDrawObject("AT_TP2Line"); RemoveDrawObject("AT_TP2Lbl");
-            RemoveDrawObject("AT_TP3"); RemoveDrawObject("AT_TP3Ray"); RemoveDrawObject("AT_TP3Lbl");
+            RemoveDrawObject("AT_TP1"); RemoveDrawObject("AT_TP1Lbl");
+            RemoveDrawObject("AT_TP2"); RemoveDrawObject("AT_TP2Lbl");
+            RemoveDrawObject("AT_TP3"); RemoveDrawObject("AT_TP3Lbl");
             RemoveDrawObject("AT_Vert");
             RemoveDrawObject("AT_MoneyStop");
             RemoveDrawObject("AT_MoneyStopLbl");
@@ -1291,7 +1886,7 @@ namespace NinjaTrader.NinjaScript.Indicators
             }
         }
 
-        private void DrawDashboard(int trend, double strengthVal, string strengthStr, double mlScore, double effectiveGate,
+        private void DrawDashboard(int trend, double strengthVal, string strengthStr, double qualityScore, double effectiveGate,
             int htfTrend, bool mtfAligned, string regime, double regimeConfidence)
         {
             StringBuilder sb = new StringBuilder();
@@ -1303,11 +1898,35 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (UseMTF)
                 sb.AppendLine("HTF: " + (htfTrend == 1 ? "Bull" : "Bear") + " (" + htfLabel + ")" + (mtfAligned ? "" : " !"));
 
-            sb.AppendLine("--- ML Engine ---");
-            sb.AppendLine("ML Score: " + mlScore.ToString("0.0") + "/100");
-            sb.AppendLine("Gate: " + effectiveGate.ToString("0.0") + (SelfLearn ? " auto" : ""));
+            int dashBucket = SignalQualityBucket(regime, trend);
             double winRate = totalSignals > 0 ? (double)winSignals / totalSignals * 100.0 : 0.0;
-            sb.AppendLine("Win Rate: " + (totalSignals >= 5 ? winRate.ToString("0") + "% (" + totalSignals + ")" : "..."));
+
+            sb.AppendLine("--- Signal Quality Engine ---");
+            sb.AppendLine("Score: " + qualityScore.ToString("0.0") + "/100");
+            sb.AppendLine("Gate: " + effectiveGate.ToString("0.0") + (SelfLearn ? " auto" : "") + " | " + SignalQualityBucketLabel(dashBucket));
+            if (sqScoreCount >= 25)
+            {
+                sb.AppendLine("Dist: " + SignalQualityAverage().ToString("0.0") +
+                    " / " + SignalQualityPercentile(0.25).ToString("0") +
+                    "-" + SignalQualityPercentile(0.50).ToString("0") +
+                    "-" + SignalQualityPercentile(0.75).ToString("0"));
+                sb.AppendLine("Pass Rate: " + SignalQualityPassRate().ToString("0") + "% (" + sqScoreCount + ")");
+            }
+            else
+            {
+                sb.AppendLine("Dist: warming...");
+            }
+            sb.AppendLine("TP1 Win: " + (totalSignals >= 5 ? winRate.ToString("0") + "% (" + totalSignals + ")" : "...") +
+                " | AvgR " + avgSignalQualityR.ToString("0.00"));
+            sb.AppendLine("Top +: " + sqTopPositive);
+            sb.AppendLine("Top -: " + sqTopNegative);
+
+            if (!double.IsNaN(vpPocPrice))
+            {
+                sb.AppendLine("VP: POC " + Fmt(vpPocPrice) +
+                    (vpInValueArea ? " inVA" : " outVA") +
+                    " d" + vpDistToPoc.ToString("0.0") + "ATR");
+            }
 
             if (UseTPSL)
             {
@@ -1331,7 +1950,9 @@ namespace NinjaTrader.NinjaScript.Indicators
                     double curRiskUsd = Math.Abs(entryPrice - slPrice) * batchPerPoint;
                     bool riskFree = posDir == 1 ? slPrice >= entryPrice : slPrice <= entryPrice;
                     sb.AppendLine("Qty: " + entryContracts);
-                    sb.AppendLine("Risk: " + (riskFree ? "FREE" : "$" + curRiskUsd.ToString("0") + " / $" + RiskUsd.ToString("0")));
+                    double dashRiskBudget = double.IsNaN(activeRiskBudgetUsd) ? RiskUsd : activeRiskBudgetUsd;
+                    sb.AppendLine("Risk: " + (riskFree ? "FREE" : "$" + curRiskUsd.ToString("0") + " / $" + dashRiskBudget.ToString("0") +
+                        (UseSignalQualityRiskScaling ? " (" + activeRiskMultiplier.ToString("0.##") + "x SQE)" : "")));
                 }
             }
 
@@ -1362,13 +1983,13 @@ namespace NinjaTrader.NinjaScript.Indicators
         }
 
         private void FireAlerts(bool confirmedBuy, bool confirmedSell, bool tp1JustHit, bool tp2JustHit,
-            bool posJustClosed, double mlScore, int htfTrend, string regime)
+            bool posJustClosed, double qualityScore, int htfTrend, string regime)
         {
             string ticker = Instrument.FullName;
             string tf = FormatTfLabel(BarsPeriod.BarsPeriodType, BarsPeriod.Value);
             string priceStr = Fmt(Close[0]);
             string bandStr = double.IsNaN(stBand) ? "0" : Fmt(stBand);
-            string mlStr = mlScore.ToString("0.0");
+            string sqeStr = qualityScore.ToString("0.0");
             string htfStr = htfTrend == 1 ? "bull" : "bear";
             string slStr = double.IsNaN(slPrice) ? "0" : Fmt(slPrice);
             string tp1Str = double.IsNaN(tp1Price) ? "0" : Fmt(tp1Price);
@@ -1376,15 +1997,15 @@ namespace NinjaTrader.NinjaScript.Indicators
             if (confirmedBuy)
             {
                 string msg = WebhookJson
-                    ? "{\"action\":\"long\",\"ticker\":\"" + ticker + "\",\"price\":" + priceStr + ",\"tf\":\"" + tf + "\",\"band\":" + bandStr + ",\"ml\":" + mlStr + ",\"adx\":" + adxVal.ToString("0.0") + ",\"htf\":\"" + htfStr + "\",\"sl\":" + slStr + ",\"tp1\":" + tp1Str + ",\"regime\":\"" + regime + "\"}"
-                    : "LONG | " + ticker + " | " + tf + " | $" + priceStr + " | ML:" + mlStr + " | SL:" + slStr;
+                    ? "{\"action\":\"long\",\"ticker\":\"" + ticker + "\",\"price\":" + priceStr + ",\"tf\":\"" + tf + "\",\"band\":" + bandStr + ",\"sqe\":" + sqeStr + ",\"adx\":" + adxVal.ToString("0.0") + ",\"htf\":\"" + htfStr + "\",\"sl\":" + slStr + ",\"tp1\":" + tp1Str + ",\"regime\":\"" + regime + "\"}"
+                    : "LONG | " + ticker + " | " + tf + " | $" + priceStr + " | SQE:" + sqeStr + " | SL:" + slStr;
                 Alert("AT_Long" + CurrentBar, Priority.High, msg, "", 10, Brushes.Black, BullColor);
             }
             if (confirmedSell)
             {
                 string msg = WebhookJson
-                    ? "{\"action\":\"short\",\"ticker\":\"" + ticker + "\",\"price\":" + priceStr + ",\"tf\":\"" + tf + "\",\"band\":" + bandStr + ",\"ml\":" + mlStr + ",\"adx\":" + adxVal.ToString("0.0") + ",\"htf\":\"" + htfStr + "\",\"sl\":" + slStr + ",\"tp1\":" + tp1Str + ",\"regime\":\"" + regime + "\"}"
-                    : "SHORT | " + ticker + " | " + tf + " | $" + priceStr + " | ML:" + mlStr + " | SL:" + slStr;
+                    ? "{\"action\":\"short\",\"ticker\":\"" + ticker + "\",\"price\":" + priceStr + ",\"tf\":\"" + tf + "\",\"band\":" + bandStr + ",\"sqe\":" + sqeStr + ",\"adx\":" + adxVal.ToString("0.0") + ",\"htf\":\"" + htfStr + "\",\"sl\":" + slStr + ",\"tp1\":" + tp1Str + ",\"regime\":\"" + regime + "\"}"
+                    : "SHORT | " + ticker + " | " + tf + " | $" + priceStr + " | SQE:" + sqeStr + " | SL:" + slStr;
                 Alert("AT_Short" + CurrentBar, Priority.High, msg, "", 10, Brushes.Black, BearColor);
             }
             if (UseTPSL && tp1JustHit)
@@ -1436,6 +2057,21 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Show Instrument Profile", Order = 3, GroupName = "02. Adaptive Engine")]
         public bool ShowProfile { get; set; }
 
+        [Range(20, 500)]
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Profile Lookback", Order = 4, GroupName = "02. Adaptive Engine")]
+        public int VolumeProfileLookback { get; set; }
+
+        [Range(12, 100)]
+        [NinjaScriptProperty]
+        [Display(Name = "Volume Profile Bins", Order = 5, GroupName = "02. Adaptive Engine")]
+        public int VolumeProfileBins { get; set; }
+
+        [Range(50.0, 95.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Value Area %", Order = 6, GroupName = "02. Adaptive Engine")]
+        public double VolumeValueAreaPct { get; set; }
+
         // ── Multi-Timeframe ──
         [NinjaScriptProperty]
         [Display(Name = "Multi-Timeframe Confluence", Order = 1, GroupName = "03. Multi-Timeframe")]
@@ -1458,99 +2094,211 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "MTF Strictness", Order = 5, GroupName = "03. Multi-Timeframe")]
         public AdaptiveTrendMtfStrictness MtfStrictness { get; set; }
 
-        // ── ML Signal Filter ──
+        // ── Signal Quality Engine ──
         [NinjaScriptProperty]
-        [Display(Name = "Enable ML Signal Filter", Order = 1, GroupName = "04. ML Signal Filter")]
-        public bool UseMLFilter { get; set; }
+        [Display(Name = "Enable Signal Quality Engine", Order = 1, GroupName = "04. Signal Quality Engine")]
+        public bool UseSignalQualityFilter { get; set; }
 
         [Range(10.0, 90.0)]
         [NinjaScriptProperty]
-        [Display(Name = "Confidence Gate", Order = 2, GroupName = "04. ML Signal Filter")]
-        public double MlGate { get; set; }
+        [Display(Name = "Base Confidence Gate", Order = 2, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGate { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Self-Learning Gate", Order = 3, GroupName = "04. ML Signal Filter")]
+        [Display(Name = "Directional Gates", Order = 3, GroupName = "04. Signal Quality Engine")]
+        public bool UseDirectionalQualityGates { get; set; }
+
+        [Range(10.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Long Gate", Order = 4, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGateLong { get; set; }
+
+        [Range(10.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Short Gate", Order = 5, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGateShort { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Regime Gates", Order = 6, GroupName = "04. Signal Quality Engine")]
+        public bool UseRegimeQualityGates { get; set; }
+
+        [Range(10.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Trending Gate", Order = 7, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGateTrending { get; set; }
+
+        [Range(10.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Ranging Gate", Order = 8, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGateRanging { get; set; }
+
+        [Range(10.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Volatile Gate", Order = 9, GroupName = "04. Signal Quality Engine")]
+        public double SignalQualityGateVolatile { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Self-Learning Gate", Order = 10, GroupName = "04. Signal Quality Engine")]
         public bool SelfLearn { get; set; }
 
         [Range(5, 50)]
         [NinjaScriptProperty]
-        [Display(Name = "Evaluation Horizon (bars)", Order = 4, GroupName = "04. ML Signal Filter")]
+        [Display(Name = "Evaluation Horizon (bars)", Order = 11, GroupName = "04. Signal Quality Engine")]
         public int EvalHorizon { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Show ML Score on Signals", Order = 5, GroupName = "04. ML Signal Filter")]
-        public bool ShowMLDebug { get; set; }
+        [Display(Name = "Show Signal Quality Score on Signals", Order = 12, GroupName = "04. Signal Quality Engine")]
+        public bool ShowSignalQualityDebug { get; set; }
 
-        // ── ML Weights ──
+        // ── Signal Quality Weights ──
+        [NinjaScriptProperty]
+        [Display(Name = "Directional Short Weights", Order = 0, GroupName = "05. Signal Quality Weights")]
+        public bool UseDirectionalQualityWeights { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Regime Weight Profiles", Order = 0, GroupName = "05. Signal Quality Weights")]
+        public bool UseRegimeWeightProfiles { get; set; }
+
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W1: Momentum (RSI)", Order = 1, GroupName = "05. ML Weights")]
+        [Display(Name = "W1: Momentum (RSI)", Order = 1, GroupName = "05. Signal Quality Weights")]
         public double W1Momentum { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W2: Volume Surge", Order = 2, GroupName = "05. ML Weights")]
+        [Display(Name = "W2: Volume Surge", Order = 2, GroupName = "05. Signal Quality Weights")]
         public double W2Volume { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W3: Trend (ER)", Order = 3, GroupName = "05. ML Weights")]
+        [Display(Name = "W3: Trend (ER)", Order = 3, GroupName = "05. Signal Quality Weights")]
         public double W3Trend { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W4: Vol Shock", Order = 4, GroupName = "05. ML Weights")]
+        [Display(Name = "W4: Vol Shock", Order = 4, GroupName = "05. Signal Quality Weights")]
         public double W4Volatility { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W5: Band Distance", Order = 5, GroupName = "05. ML Weights")]
+        [Display(Name = "W5: Band Distance", Order = 5, GroupName = "05. Signal Quality Weights")]
         public double W5Distance { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W6: MACD", Order = 6, GroupName = "05. ML Weights")]
+        [Display(Name = "W6: MACD", Order = 6, GroupName = "05. Signal Quality Weights")]
         public double W6Macd { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W7: Price Structure", Order = 7, GroupName = "05. ML Weights")]
+        [Display(Name = "W7: Price Structure", Order = 7, GroupName = "05. Signal Quality Weights")]
         public double W7Structure { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W8: Regime", Order = 8, GroupName = "05. ML Weights")]
+        [Display(Name = "W8: Regime", Order = 8, GroupName = "05. Signal Quality Weights")]
         public double W8Regime { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W9: MTF Confluence", Order = 9, GroupName = "05. ML Weights")]
+        [Display(Name = "W9: MTF Confluence", Order = 9, GroupName = "05. Signal Quality Weights")]
         public double W9Mtf { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W10: ADX Strength", Order = 10, GroupName = "05. ML Weights")]
+        [Display(Name = "W10: ADX Strength", Order = 10, GroupName = "05. Signal Quality Weights")]
         public double W10Adx { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W11: RSI Divergence", Order = 11, GroupName = "05. ML Weights")]
+        [Display(Name = "W11: RSI Divergence", Order = 11, GroupName = "05. Signal Quality Weights")]
         public double W11Divergence { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W12: Vol Profile Zone", Order = 12, GroupName = "05. ML Weights")]
+        [Display(Name = "W12: Vol Profile Zone", Order = 12, GroupName = "05. Signal Quality Weights")]
         public double W12VolProfile { get; set; }
 
         [Range(-1.0, 1.0)]
         [NinjaScriptProperty]
-        [Display(Name = "W13: Session Quality", Order = 13, GroupName = "05. ML Weights")]
+        [Display(Name = "W13: Session Quality", Order = 13, GroupName = "05. Signal Quality Weights")]
         public double W13Session { get; set; }
 
         [Range(-50.0, 50.0)]
         [NinjaScriptProperty]
-        [Display(Name = "Bias", Order = 14, GroupName = "05. ML Weights")]
+        [Display(Name = "Bias", Order = 14, GroupName = "05. Signal Quality Weights")]
         public double WBias { get; set; }
+
+        // ── Signal Quality Short Weights ──
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W1: Momentum (RSI)", Order = 1, GroupName = "05b. Signal Quality Short Weights")]
+        public double W1MomentumShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W2: Volume Surge", Order = 2, GroupName = "05b. Signal Quality Short Weights")]
+        public double W2VolumeShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W3: Trend (ER)", Order = 3, GroupName = "05b. Signal Quality Short Weights")]
+        public double W3TrendShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W4: Vol Shock", Order = 4, GroupName = "05b. Signal Quality Short Weights")]
+        public double W4VolatilityShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W5: Band Distance", Order = 5, GroupName = "05b. Signal Quality Short Weights")]
+        public double W5DistanceShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W6: MACD", Order = 6, GroupName = "05b. Signal Quality Short Weights")]
+        public double W6MacdShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W7: Price Structure", Order = 7, GroupName = "05b. Signal Quality Short Weights")]
+        public double W7StructureShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W8: Regime", Order = 8, GroupName = "05b. Signal Quality Short Weights")]
+        public double W8RegimeShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W9: MTF Confluence", Order = 9, GroupName = "05b. Signal Quality Short Weights")]
+        public double W9MtfShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W10: ADX Strength", Order = 10, GroupName = "05b. Signal Quality Short Weights")]
+        public double W10AdxShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W11: RSI Divergence", Order = 11, GroupName = "05b. Signal Quality Short Weights")]
+        public double W11DivergenceShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W12: Vol Profile Zone", Order = 12, GroupName = "05b. Signal Quality Short Weights")]
+        public double W12VolProfileShort { get; set; }
+
+        [Range(-1.0, 1.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-W13: Session Quality", Order = 13, GroupName = "05b. Signal Quality Short Weights")]
+        public double W13SessionShort { get; set; }
+
+        [Range(-50.0, 50.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "S-Bias", Order = 14, GroupName = "05b. Signal Quality Short Weights")]
+        public double WBiasShort { get; set; }
 
         // ── Filters ──
         [Range(0.0, 1.0)]
@@ -1585,6 +2333,39 @@ namespace NinjaTrader.NinjaScript.Indicators
         [NinjaScriptProperty]
         [Display(Name = "Volume Multiplier", Order = 7, GroupName = "06. Filters")]
         public double VolMultiplier { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Sideways Filter", Order = 8, GroupName = "06. Filters")]
+        public bool UseSidewaysFilter { get; set; }
+
+        [Range(5.0, 40.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Min ADX Trend", Order = 9, GroupName = "06. Filters")]
+        public double MinTrendAdx { get; set; }
+
+        [Range(0.05, 0.80)]
+        [NinjaScriptProperty]
+        [Display(Name = "Min Efficiency Ratio", Order = 10, GroupName = "06. Filters")]
+        public double MinEfficiencyRatio { get; set; }
+
+        [Range(30.0, 90.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Range Block Confidence", Order = 11, GroupName = "06. Filters")]
+        public double RangeBlockConfidence { get; set; }
+
+        [NinjaScriptProperty]
+        [Display(Name = "Allow Range Breakouts", Order = 12, GroupName = "06. Filters")]
+        public bool AllowRangeBreakouts { get; set; }
+
+        [Range(5, 100)]
+        [NinjaScriptProperty]
+        [Display(Name = "Range Breakout Lookback", Order = 13, GroupName = "06. Filters")]
+        public int RangeBreakoutLookback { get; set; }
+
+        [Range(0.0, 2.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Breakout ATR Buffer", Order = 14, GroupName = "06. Filters")]
+        public double BreakoutAtrBuffer { get; set; }
 
         // ── Session Filter ──
         [NinjaScriptProperty]
@@ -1694,6 +2475,35 @@ namespace NinjaTrader.NinjaScript.Indicators
         [Display(Name = "Min AVG Separation (points)", Order = 5, GroupName = "08b. Risk Management")]
         public double MinAvgSepPoints { get; set; }
 
+        [NinjaScriptProperty]
+        [Display(Name = "Scale Risk by Signal Quality", Order = 6, GroupName = "08b. Risk Management")]
+        public bool UseSignalQualityRiskScaling { get; set; }
+
+        [Range(0.0, 100.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Quality Mid Threshold", Order = 7, GroupName = "08b. Risk Management")]
+        public double SignalQualityRiskMidThreshold { get; set; }
+
+        [Range(0.0, 100.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Quality High Threshold", Order = 8, GroupName = "08b. Risk Management")]
+        public double SignalQualityRiskHighThreshold { get; set; }
+
+        [Range(0.05, 2.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Low Quality Risk Mult", Order = 9, GroupName = "08b. Risk Management")]
+        public double SignalQualityRiskMinMultiplier { get; set; }
+
+        [Range(0.05, 2.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "Mid Quality Risk Mult", Order = 10, GroupName = "08b. Risk Management")]
+        public double SignalQualityRiskMidMultiplier { get; set; }
+
+        [Range(0.05, 2.0)]
+        [NinjaScriptProperty]
+        [Display(Name = "High Quality Risk Mult", Order = 11, GroupName = "08b. Risk Management")]
+        public double SignalQualityRiskHighMultiplier { get; set; }
+
         // ── Visual ──
         [Range(0, 3650)]
         [NinjaScriptProperty]
@@ -1713,8 +2523,8 @@ namespace NinjaTrader.NinjaScript.Indicators
         public bool ShowFiltered { get; set; }
 
         [NinjaScriptProperty]
-        [Display(Name = "Show ML-Rejected Signals", Order = 4, GroupName = "09. Visual")]
-        public bool ShowMLRejected { get; set; }
+        [Display(Name = "Show Signal Quality-Rejected Signals", Order = 4, GroupName = "09. Visual")]
+        public bool ShowSignalQualityRejected { get; set; }
 
         [NinjaScriptProperty]
         [Display(Name = "Show SuperTrend Band", Order = 5, GroupName = "09. Visual")]
@@ -1812,9 +2622,9 @@ namespace NinjaTrader.NinjaScript.Indicators
 
         [Browsable(false)]
         [XmlIgnore]
-        public Series<double> MLScore
+        public Series<double> SignalQualityScore
         {
-            get { return mlScoreSeries; }
+            get { return signalQualityScoreSeries; }
         }
 
         [Browsable(false)]
