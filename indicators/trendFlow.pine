@@ -74,19 +74,30 @@ srcInput = input.source(close, "Source",
      tooltip = "Price source used for trailing and flip detection.\n" +
                "Close (default) is the most robust; HL2 reacts slightly faster")
 
+engineTfInput = input.timeframe("", "Engine Timeframe",
+     group   = GRP_MAIN,
+     tooltip = "Timeframe used for the trend engine's source and ATR bands.\n" +
+               "Leave empty to use the chart timeframe.\n" +
+               "Example: chart 2m with Engine Timeframe = 15 calculates\n" +
+               "TrendFlow bands/flips from 15m data")
+
 flipBandStr = input.string("Balanced (Band 3)", "Flip Band",
-     options = ["Fast (Band 2)", "Balanced (Band 3)", "Deep (Band 4)"],
+     options = ["Fast (Band 2)", "Balanced (Band 3)", "Deep (Band 4)", "Extreme (Band 5)", "Maximum (Band 6)", "Band 7", "Band 8", "Band 9", "Band 10"],
      group   = GRP_MAIN,
      tooltip = "Which band a close must breach to flip the trend.\n" +
                "• Fast (Band 2): earliest flips, more signals, more noise\n" +
                "• Balanced (Band 3): recommended default\n" +
-               "• Deep (Band 4): only major reversals flip the trend")
+               "• Deep (Band 4): only major reversals flip the trend\n" +
+               "• Extreme (Band 5): wider confirmation\n" +
+               "• Maximum (Band 6): very wide confirmation\n" +
+               "• Bands 7-10: progressively wider confirmations")
 
 htfInput = input.timeframe("", "Higher Timeframe Bias",
      group   = GRP_MAIN,
      tooltip = "HTF used for bias scoring (EMA-50 direction on that timeframe).\n" +
                "Leave empty to use the chart timeframe.\n" +
                "Example: set 1H while trading 15M.\n" +
+               "Separate from Engine Timeframe.\n" +
                "Non-repainting: uses closed HTF bars only")
 
 // ── Signals ─────────────────────────────────────────────────
@@ -160,7 +171,28 @@ themeInput = input.string("Auto", "Theme",
                "• Light: optimized for light/white backgrounds")
 
 showBandsInput = input.bool(true, "Show Trail Bands", group = GRP_VISUAL,
-     tooltip = "Draw the four trailing band lines")
+     tooltip = "Master switch for trailing band lines. Individual band toggles below only affect plots, not calculations")
+
+showBand1Input = input.bool(true, "Band 1", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 1 plot only. Calculations, signals and risk logic still use the band")
+showBand2Input = input.bool(true, "Band 2", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 2 plot only. Calculations, signals and risk logic still use the band")
+showBand3Input = input.bool(true, "Band 3", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 3 plot only. Calculations, signals and risk logic still use the band")
+showBand4Input = input.bool(true, "Band 4", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 4 plot only. Calculations and signals still use the band")
+showBand5Input = input.bool(true, "Band 5", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 5 plot only. Calculations and optional deep flips still use the band")
+showBand6Input = input.bool(true, "Band 6", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 6 plot only. Calculations and optional maximum flips still use the band")
+showBand7Input = input.bool(true, "Band 7", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 7 plot only. Calculations and optional deep flips still use the band")
+showBand8Input = input.bool(true, "Band 8", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 8 plot only. Calculations and optional deep flips still use the band")
+showBand9Input = input.bool(true, "Band 9", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 9 plot only. Calculations and optional deep flips still use the band")
+showBand10Input = input.bool(true, "Band 10", inline = "bandPlots", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 10 plot only. Calculations, optional deepest flips, SL and trailing logic still use the band")
 
 showHeatInput = input.bool(true, "Show Band Heatmap Fill", group = GRP_VISUAL,
      tooltip = "Gradient fill between bands (liquidity pressure zone)")
@@ -192,7 +224,7 @@ riskPresetInput = input.string("Balanced", "Risk Preset",
      options = ["Conservative", "Balanced", "Aggressive", "Scalping", "Custom"],
      group   = GRP_RISK,
      tooltip = "Quick risk presets:\n" +
-               "• Conservative: Band 4 SL in ATR mode, trails after TP1\n" +
+               "• Conservative: Band 10 SL in ATR mode, trails after TP1\n" +
                "• Balanced: SL 1.5×ATR, TP 1R/2R/3R\n" +
                "• Aggressive: SL 1.0×ATR, TP 1.5R/2.5R/4R\n" +
                "• Scalping: SL 0.8×ATR, TP 0.8R/1.5R/2R\n" +
@@ -207,7 +239,7 @@ slModeInput = input.string("Wick-Anchored", "SL Mode",
                "• Wick-Anchored: below/above the signal bar's wick + 0.25×ATR buffer\n" +
                "  (min distance 0.5×ATR enforced). Structure-aware, recommended\n" +
                "• ATR: fixed SL Multiplier × ATR distance from entry\n" +
-               "  Conservative preset uses Band 4, then trails it after TP1")
+               "  Conservative preset uses Band 10, then trails it after TP1")
 
 atrLenRiskInput = input.int(14, "ATR Length (Risk)", minval = 5, maxval = 50, group = GRP_RISK,
      tooltip = "ATR period for stop-loss distance calculation.\n" +
@@ -235,7 +267,7 @@ tp3MultInput = input.float(3.0, "TP3 Multiplier (×Risk)", minval = 1.5, maxval 
 
 beInput = input.bool(true, "Break-Even After TP1", group = GRP_RISK,
      tooltip = "Move stop-loss to entry price once TP1 is reached.\n" +
-               "Conservative ATR uses Band 4 trailing instead of BE.\n" +
+               "Conservative ATR uses Band 10 trailing instead of BE.\n" +
                "Positions stopped at break-even after TP1 count as wins")
 
 showSlTpInput = input.bool(true, "Show SL/TP Lines", group = GRP_RISK,
@@ -432,12 +464,32 @@ float m1 = effBase
 float m2 = effBase * (1.0 + effStep)
 float m3 = effBase * (1.0 + 2.0 * effStep)
 float m4 = effBase * (1.0 + 3.0 * effStep)
+float m5 = effBase * (1.0 + 4.0 * effStep)
+float m6 = effBase * (1.0 + 5.0 * effStep)
+float m7 = effBase * (1.0 + 6.0 * effStep)
+float m8 = effBase * (1.0 + 7.0 * effStep)
+float m9 = effBase * (1.0 + 8.0 * effStep)
+float m10 = effBase * (1.0 + 9.0 * effStep)
 
-int flipChoice = flipBandStr == "Fast (Band 2)" ? 2 : flipBandStr == "Deep (Band 4)" ? 4 : 3
+int flipChoice = switch flipBandStr
+    "Fast (Band 2)"    => 2
+    "Deep (Band 4)"    => 4
+    "Extreme (Band 5)" => 5
+    "Maximum (Band 6)" => 6
+    "Band 7"           => 7
+    "Band 8"           => 8
+    "Band 9"           => 9
+    "Band 10"          => 10
+    =>                    3
 
 // ── Core series ──
-float trailAtr = nz(ta.atr(atrLenInput), 0.0)
-float src      = srcInput
+string engineTf = engineTfInput == "" ? timeframe.period : engineTfInput
+bool   useEngineTf = engineTfInput != ""
+[engineSrc, engineAtr] = request.security(syminfo.tickerid, engineTf, [srcInput, ta.atr(atrLenInput)], barmerge.gaps_off, barmerge.lookahead_off)
+
+float chartTrailAtr = nz(ta.atr(atrLenInput), 0.0)
+float trailAtr      = useEngineTf ? nz(engineAtr, 0.0) : chartTrailAtr
+float src           = useEngineTf and not na(engineSrc) ? engineSrc : srcInput
 
 int WARMUP_BARS = math.max(atrLenInput * 3, 60)
 bool isWarmedUp = bar_index >= WARMUP_BARS
@@ -447,24 +499,51 @@ float upper1 = src - trailAtr * m1
 float upper2 = src - trailAtr * m2
 float upper3 = src - trailAtr * m3
 float upper4 = src - trailAtr * m4
+float upper5 = src - trailAtr * m5
+float upper6 = src - trailAtr * m6
+float upper7 = src - trailAtr * m7
+float upper8 = src - trailAtr * m8
+float upper9 = src - trailAtr * m9
+float upper10 = src - trailAtr * m10
 
 float lower1 = src + trailAtr * m1
 float lower2 = src + trailAtr * m2
 float lower3 = src + trailAtr * m3
 float lower4 = src + trailAtr * m4
+float lower5 = src + trailAtr * m5
+float lower6 = src + trailAtr * m6
+float lower7 = src + trailAtr * m7
+float lower8 = src + trailAtr * m8
+float lower9 = src + trailAtr * m9
+float lower10 = src + trailAtr * m10
 
 // ── State ──
 var float ts1 = na
 var float ts2 = na
 var float ts3 = na
 var float ts4 = na
+var float ts5 = na
+var float ts6 = na
+var float ts7 = na
+var float ts8 = na
+var float ts9 = na
+var float ts10 = na
 var int   trend = 1
 var int   trendStartBar = 0
 var float trendHigh = na
 var float trendLow  = na
 
 // Flip reference = previous bar's value of the CHOSEN band
-float flipPrev = flipChoice == 2 ? ts2[1] : flipChoice == 3 ? ts3[1] : ts4[1]
+float flipPrev = switch flipChoice
+    2  => ts2[1]
+    3  => ts3[1]
+    4  => ts4[1]
+    5  => ts5[1]
+    6  => ts6[1]
+    7  => ts7[1]
+    8  => ts8[1]
+    9  => ts9[1]
+    =>    ts10[1]
 
 bool doFlipDown = trend == 1  and not na(flipPrev) and src < flipPrev
 bool doFlipUp   = trend == -1 and not na(flipPrev) and src > flipPrev
@@ -476,11 +555,23 @@ if trend == 1
         ts2 := lower2
         ts3 := lower3
         ts4 := lower4
+        ts5 := lower5
+        ts6 := lower6
+        ts7 := lower7
+        ts8 := lower8
+        ts9 := lower9
+        ts10 := lower10
     else
         ts1 := math.max(upper1, nz(ts1[1], upper1))
         ts2 := math.max(upper2, nz(ts2[1], upper2))
         ts3 := math.max(upper3, nz(ts3[1], upper3))
         ts4 := math.max(upper4, nz(ts4[1], upper4))
+        ts5 := math.max(upper5, nz(ts5[1], upper5))
+        ts6 := math.max(upper6, nz(ts6[1], upper6))
+        ts7 := math.max(upper7, nz(ts7[1], upper7))
+        ts8 := math.max(upper8, nz(ts8[1], upper8))
+        ts9 := math.max(upper9, nz(ts9[1], upper9))
+        ts10 := math.max(upper10, nz(ts10[1], upper10))
 else
     if doFlipUp
         trend := 1
@@ -488,11 +579,23 @@ else
         ts2 := upper2
         ts3 := upper3
         ts4 := upper4
+        ts5 := upper5
+        ts6 := upper6
+        ts7 := upper7
+        ts8 := upper8
+        ts9 := upper9
+        ts10 := upper10
     else
         ts1 := math.min(lower1, nz(ts1[1], lower1))
         ts2 := math.min(lower2, nz(ts2[1], lower2))
         ts3 := math.min(lower3, nz(ts3[1], lower3))
         ts4 := math.min(lower4, nz(ts4[1], lower4))
+        ts5 := math.min(lower5, nz(ts5[1], lower5))
+        ts6 := math.min(lower6, nz(ts6[1], lower6))
+        ts7 := math.min(lower7, nz(ts7[1], lower7))
+        ts8 := math.min(lower8, nz(ts8[1], lower8))
+        ts9 := math.min(lower9, nz(ts9[1], lower9))
+        ts10 := math.min(lower10, nz(ts10[1], lower10))
 
 int  trendPrev = nz(trend[1], 1)
 bool flipBar   = trend != trendPrev
@@ -553,8 +656,51 @@ if flipBar
     pendingShortDepth := 0
 
 // Touch detection: how deep did price pull into the band stack?
-int touchDepthL = trend == 1  and not na(ts1) ? (low <= ts4 ? 4 : low <= ts3 ? 3 : low <= ts2 ? 2 : low <= ts1 ? 1 : 0) : 0
-int touchDepthS = trend == -1 and not na(ts1) ? (high >= ts4 ? 4 : high >= ts3 ? 3 : high >= ts2 ? 2 : high >= ts1 ? 1 : 0) : 0
+int touchDepthL = 0
+if trend == 1 and not na(ts1)
+    if low <= ts1
+        touchDepthL := 1
+    if low <= ts2
+        touchDepthL := 2
+    if low <= ts3
+        touchDepthL := 3
+    if low <= ts4
+        touchDepthL := 4
+    if low <= ts5
+        touchDepthL := 5
+    if low <= ts6
+        touchDepthL := 6
+    if low <= ts7
+        touchDepthL := 7
+    if low <= ts8
+        touchDepthL := 8
+    if low <= ts9
+        touchDepthL := 9
+    if low <= ts10
+        touchDepthL := 10
+
+int touchDepthS = 0
+if trend == -1 and not na(ts1)
+    if high >= ts1
+        touchDepthS := 1
+    if high >= ts2
+        touchDepthS := 2
+    if high >= ts3
+        touchDepthS := 3
+    if high >= ts4
+        touchDepthS := 4
+    if high >= ts5
+        touchDepthS := 5
+    if high >= ts6
+        touchDepthS := 6
+    if high >= ts7
+        touchDepthS := 7
+    if high >= ts8
+        touchDepthS := 8
+    if high >= ts9
+        touchDepthS := 9
+    if high >= ts10
+        touchDepthS := 10
 
 if touchDepthL > 0
     pendingLong      := retestWindowInput
@@ -573,8 +719,8 @@ float rngBar = high - low
 float clrL   = rngBar > 0 ? (close - low) / rngBar : 0.5
 float clrS   = rngBar > 0 ? (high - close) / rngBar : 0.5
 
-int depthPtsL  = pendingLongDepth == 2 ? 25 : pendingLongDepth == 3 ? 18 : pendingLongDepth == 1 ? 15 : pendingLongDepth == 4 ? 10 : 0
-int depthPtsS  = pendingShortDepth == 2 ? 25 : pendingShortDepth == 3 ? 18 : pendingShortDepth == 1 ? 15 : pendingShortDepth == 4 ? 10 : 0
+int depthPtsL = pendingLongDepth >= 6 ? 2 : pendingLongDepth == 5 ? 5 : pendingLongDepth == 4 ? 10 : pendingLongDepth == 3 ? 18 : pendingLongDepth == 2 ? 25 : pendingLongDepth == 1 ? 15 : 0
+int depthPtsS = pendingShortDepth >= 6 ? 2 : pendingShortDepth == 5 ? 5 : pendingShortDepth == 4 ? 10 : pendingShortDepth == 3 ? 18 : pendingShortDepth == 2 ? 25 : pendingShortDepth == 1 ? 15 : 0
 int candlePtsL = clrL > 0.7 ? 20 : clrL > 0.5 ? 12 : 5
 int candlePtsS = clrS > 0.7 ? 20 : clrS > 0.5 ? 12 : 5
 int agePts     = barsInTrend >= 10 and barsInTrend <= 150 ? 15 : barsInTrend < 10 ? 8 : 5
@@ -692,9 +838,9 @@ if beInput and not conservativeBandStop and tp1FirstTouch and not beActive and a
     beActive        := true
     beJustActivated := true
 
-// ── Band-4 trailing after TP1 (Conservative ATR only) ──
+// ── Band-10 trailing after TP1 (Conservative ATR only) ──
 if conservativeBandStop and activeDir != 0 and tp1Reached and barstate.isconfirmed and not slHitRaw and not tp3HitRaw and not na(activeSL)
-    float trailCandidate = activeDir == 1 and not na(ts4) and ts4 < close ? ts4 : activeDir == -1 and not na(ts4) and ts4 > close ? ts4 : na
+    float trailCandidate = activeDir == 1 and not na(ts10) and ts10 < close ? ts10 : activeDir == -1 and not na(ts10) and ts10 > close ? ts10 : na
     if not na(trailCandidate)
         activeSL := trailActive ? (activeDir == 1 ? math.max(activeSL, trailCandidate) : math.min(activeSL, trailCandidate)) : trailCandidate
         trailActive := true
@@ -802,7 +948,7 @@ bool evShortEntry = false
 
 if longEntrySignal and activeDir == 0 and slDistance > 0
     float slAtrLong  = close - slDistance
-    float slBandLong = conservativeBandStop and not na(ts4) and ts4 < close ? ts4 : slAtrLong
+    float slBandLong = conservativeBandStop and not na(ts10) and ts10 < close ? ts10 : slAtrLong
     float slWickLong = math.min(low - riskAtr * 0.25, close - riskAtr * 0.5)
     float slLong     = slModeInput == "ATR" ? slBandLong : slWickLong
     float riskLong   = close - slLong
@@ -823,7 +969,7 @@ if longEntrySignal and activeDir == 0 and slDistance > 0
 
 if shortEntrySignal and activeDir == 0 and slDistance > 0
     float slAtrShort  = close + slDistance
-    float slBandShort = conservativeBandStop and not na(ts4) and ts4 > close ? ts4 : slAtrShort
+    float slBandShort = conservativeBandStop and not na(ts10) and ts10 > close ? ts10 : slAtrShort
     float slWickShort = math.max(high + riskAtr * 0.25, close + riskAtr * 0.5)
     float slShort     = slModeInput == "ATR" ? slBandShort : slWickShort
     float riskShort   = slShort - close
@@ -856,24 +1002,57 @@ color trendColor = trend == 1 ? bullColorInput : bearColorInput
 int B1_T = isDark ? 70 : 55
 int B2_T = isDark ? 50 : 38
 int B3_T = isDark ? 25 : 15
+int B4_T = isDark ? 10 : 6
+int B5_T = isDark ? 5 : 3
+int B6_T = isDark ? 12 : 8
+int B7_T = isDark ? 9 : 6
+int B8_T = isDark ? 6 : 4
+int B9_T = isDark ? 3 : 2
 int H1_T = isDark ? 92 : 88
 int H2_T = isDark ? 82 : 77
 int H3_T = isDark ? 70 : 64
+int H4_T = isDark ? 60 : 54
+int H5_T = isDark ? 52 : 46
+int H6_T = isDark ? 46 : 40
+int H7_T = isDark ? 42 : 36
+int H8_T = isDark ? 38 : 32
+int H9_T = isDark ? 34 : 28
 
-p1 = plot(flipBar ? na : ts1, "Band 1", color = color.new(trendColor, B1_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput ? display.all : display.none)
-p2 = plot(flipBar ? na : ts2, "Band 2", color = color.new(trendColor, B2_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput ? display.all : display.none)
-p3 = plot(flipBar ? na : ts3, "Band 3", color = color.new(trendColor, B3_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput ? display.all : display.none)
-p4 = plot(flipBar ? na : ts4, "Band 4", color = color.new(trendColor, 0),   linewidth = 2, style = plot.style_linebr, display = showBandsInput ? display.all : display.none)
+p1 = plot(flipBar ? na : ts1, "Band 1", color = color.new(trendColor, B1_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput and showBand1Input ? display.all : display.none)
+p2 = plot(flipBar ? na : ts2, "Band 2", color = color.new(trendColor, B2_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput and showBand2Input ? display.all : display.none)
+p3 = plot(flipBar ? na : ts3, "Band 3", color = color.new(trendColor, B3_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand3Input ? display.all : display.none)
+p4 = plot(flipBar ? na : ts4, "Band 4", color = color.new(trendColor, B4_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand4Input ? display.all : display.none)
+p5 = plot(flipBar ? na : ts5, "Band 5", color = color.new(trendColor, B5_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand5Input ? display.all : display.none)
+p6 = plot(flipBar ? na : ts6, "Band 6", color = color.new(trendColor, B6_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand6Input ? display.all : display.none)
+p7 = plot(flipBar ? na : ts7, "Band 7", color = color.new(trendColor, B7_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand7Input ? display.all : display.none)
+p8 = plot(flipBar ? na : ts8, "Band 8", color = color.new(trendColor, B8_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand8Input ? display.all : display.none)
+p9 = plot(flipBar ? na : ts9, "Band 9", color = color.new(trendColor, B9_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand9Input ? display.all : display.none)
+p10 = plot(flipBar ? na : ts10, "Band 10", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand10Input ? display.all : display.none)
 
-fill(p1, p2, color.new(trendColor, H1_T), title = "Heatmap Inner",  display = showHeatInput ? display.all : display.none)
-fill(p2, p3, color.new(trendColor, H2_T), title = "Heatmap Middle", display = showHeatInput ? display.all : display.none)
-fill(p3, p4, color.new(trendColor, H3_T), title = "Heatmap Outer",  display = showHeatInput ? display.all : display.none)
+fill(p1, p2, color.new(trendColor, H1_T), title = "Heatmap Inner",  display = showHeatInput and showBandsInput and showBand1Input and showBand2Input ? display.all : display.none)
+fill(p2, p3, color.new(trendColor, H2_T), title = "Heatmap Middle", display = showHeatInput and showBandsInput and showBand2Input and showBand3Input ? display.all : display.none)
+fill(p3, p4, color.new(trendColor, H3_T), title = "Heatmap Outer",  display = showHeatInput and showBandsInput and showBand3Input and showBand4Input ? display.all : display.none)
+fill(p4, p5, color.new(trendColor, H4_T), title = "Heatmap Extreme", display = showHeatInput and showBandsInput and showBand4Input and showBand5Input ? display.all : display.none)
+fill(p5, p6, color.new(trendColor, H5_T), title = "Heatmap Maximum", display = showHeatInput and showBandsInput and showBand5Input and showBand6Input ? display.all : display.none)
+fill(p6, p7, color.new(trendColor, H6_T), title = "Heatmap Band 7",  display = showHeatInput and showBandsInput and showBand6Input and showBand7Input ? display.all : display.none)
+fill(p7, p8, color.new(trendColor, H7_T), title = "Heatmap Band 8",  display = showHeatInput and showBandsInput and showBand7Input and showBand8Input ? display.all : display.none)
+fill(p8, p9, color.new(trendColor, H8_T), title = "Heatmap Band 9",  display = showHeatInput and showBandsInput and showBand8Input and showBand9Input ? display.all : display.none)
+fill(p9, p10, color.new(trendColor, H9_T), title = "Heatmap Band 10", display = showHeatInput and showBandsInput and showBand9Input and showBand10Input ? display.all : display.none)
 
 // ══════════════════════════════════════════════════════════
 // 10. LABELS & SHAPES — SIGNALS
 // ══════════════════════════════════════════════════════════
+float flipLabelLevel = switch flipChoice
+    5  => ts5
+    6  => ts6
+    7  => ts7
+    8  => ts8
+    9  => ts9
+    10 => ts10
+    =>    ts4
+
 if confirmedBullFlip and showFlipLabelsInput
-    label.new(bar_index, ts4, "▲ FLIP",
+    label.new(bar_index, flipLabelLevel, "▲ FLIP",
          color     = bullColorInput,
          textcolor = BULL_LABEL_TEXT,
          style     = label.style_label_up,
@@ -881,7 +1060,7 @@ if confirmedBullFlip and showFlipLabelsInput
          tooltip   = "Bull Flip (confirmed on bar close)\nClose crossed above " + flipBandStr)
 
 if confirmedBearFlip and showFlipLabelsInput
-    label.new(bar_index, ts4, "▼ FLIP",
+    label.new(bar_index, flipLabelLevel, "▼ FLIP",
          color     = bearColorInput,
          textcolor = BEAR_LABEL_TEXT,
          style     = label.style_label_down,
