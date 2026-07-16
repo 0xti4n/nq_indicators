@@ -82,7 +82,7 @@ engineTfInput = input.timeframe("", "Engine Timeframe",
                "TrendFlow bands/flips from 15m data")
 
 flipBandStr = input.string("Balanced (Band 3)", "Flip Band",
-     options = ["Fast (Band 2)", "Balanced (Band 3)", "Deep (Band 4)", "Extreme (Band 5)", "Maximum (Band 6)", "Band 7", "Band 8", "Band 9", "Band 10"],
+     options = ["Fast (Band 2)", "Balanced (Band 3)", "Deep (Band 4)", "Extreme (Band 5)", "Maximum (Band 6)", "Band 7", "Band 8", "Band 9", "Band 10", "Band 11", "Band 12", "Band 13", "Band 14", "Band 15", "Band 16", "Band 17", "Band 18", "Band 19", "Band 20"],
      group   = GRP_MAIN,
      tooltip = "Which band a close must breach to flip the trend.\n" +
                "• Fast (Band 2): earliest flips, more signals, more noise\n" +
@@ -90,7 +90,7 @@ flipBandStr = input.string("Balanced (Band 3)", "Flip Band",
                "• Deep (Band 4): only major reversals flip the trend\n" +
                "• Extreme (Band 5): wider confirmation\n" +
                "• Maximum (Band 6): very wide confirmation\n" +
-               "• Bands 7-10: progressively wider confirmations")
+               "• Bands 7-20: progressively wider confirmations")
 
 htfInput = input.timeframe("", "Higher Timeframe Bias",
      group   = GRP_MAIN,
@@ -173,26 +173,46 @@ themeInput = input.string("Auto", "Theme",
 showBandsInput = input.bool(true, "Show Trail Bands", group = GRP_VISUAL,
      tooltip = "Master switch for trailing band lines. Individual band toggles below only affect plots, not calculations")
 
-showBand1Input = input.bool(true, "Band 1", inline = "bandPlots", group = GRP_VISUAL,
+showBand1Input = input.bool(true, "Band 1", inline = "bandPlots1", group = GRP_VISUAL,
      tooltip = "Show/hide Band 1 plot only. Calculations, signals and risk logic still use the band")
-showBand2Input = input.bool(true, "Band 2", inline = "bandPlots", group = GRP_VISUAL,
+showBand2Input = input.bool(true, "Band 2", inline = "bandPlots1", group = GRP_VISUAL,
      tooltip = "Show/hide Band 2 plot only. Calculations, signals and risk logic still use the band")
-showBand3Input = input.bool(true, "Band 3", inline = "bandPlots", group = GRP_VISUAL,
+showBand3Input = input.bool(true, "Band 3", inline = "bandPlots1", group = GRP_VISUAL,
      tooltip = "Show/hide Band 3 plot only. Calculations, signals and risk logic still use the band")
-showBand4Input = input.bool(true, "Band 4", inline = "bandPlots", group = GRP_VISUAL,
+showBand4Input = input.bool(true, "Band 4", inline = "bandPlots1", group = GRP_VISUAL,
      tooltip = "Show/hide Band 4 plot only. Calculations and signals still use the band")
-showBand5Input = input.bool(true, "Band 5", inline = "bandPlots", group = GRP_VISUAL,
+showBand5Input = input.bool(true, "Band 5", inline = "bandPlots1", group = GRP_VISUAL,
      tooltip = "Show/hide Band 5 plot only. Calculations and optional deep flips still use the band")
-showBand6Input = input.bool(true, "Band 6", inline = "bandPlots", group = GRP_VISUAL,
+showBand6Input = input.bool(true, "Band 6", inline = "bandPlots2", group = GRP_VISUAL,
      tooltip = "Show/hide Band 6 plot only. Calculations and optional maximum flips still use the band")
-showBand7Input = input.bool(true, "Band 7", inline = "bandPlots", group = GRP_VISUAL,
+showBand7Input = input.bool(true, "Band 7", inline = "bandPlots2", group = GRP_VISUAL,
      tooltip = "Show/hide Band 7 plot only. Calculations and optional deep flips still use the band")
-showBand8Input = input.bool(true, "Band 8", inline = "bandPlots", group = GRP_VISUAL,
+showBand8Input = input.bool(true, "Band 8", inline = "bandPlots2", group = GRP_VISUAL,
      tooltip = "Show/hide Band 8 plot only. Calculations and optional deep flips still use the band")
-showBand9Input = input.bool(true, "Band 9", inline = "bandPlots", group = GRP_VISUAL,
+showBand9Input = input.bool(true, "Band 9", inline = "bandPlots2", group = GRP_VISUAL,
      tooltip = "Show/hide Band 9 plot only. Calculations and optional deep flips still use the band")
-showBand10Input = input.bool(true, "Band 10", inline = "bandPlots", group = GRP_VISUAL,
-     tooltip = "Show/hide Band 10 plot only. Calculations, optional deepest flips, SL and trailing logic still use the band")
+showBand10Input = input.bool(true, "Band 10", inline = "bandPlots2", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 10 plot only. Calculations and optional deep flips still use the band")
+showBand11Input = input.bool(true, "Band 11", inline = "bandPlots3", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 11 plot only. Calculations and optional deep flips still use the band")
+showBand12Input = input.bool(true, "Band 12", inline = "bandPlots3", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 12 plot only. Calculations and optional deep flips still use the band")
+showBand13Input = input.bool(true, "Band 13", inline = "bandPlots3", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 13 plot only. Calculations and optional deep flips still use the band")
+showBand14Input = input.bool(true, "Band 14", inline = "bandPlots3", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 14 plot only. Calculations and optional deep flips still use the band")
+showBand15Input = input.bool(true, "Band 15", inline = "bandPlots3", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 15 plot only. Calculations and optional deep flips still use the band")
+showBand16Input = input.bool(true, "Band 16", inline = "bandPlots4", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 16 plot only. Calculations and optional deep flips still use the band")
+showBand17Input = input.bool(true, "Band 17", inline = "bandPlots4", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 17 plot only. Calculations and optional deep flips still use the band")
+showBand18Input = input.bool(true, "Band 18", inline = "bandPlots4", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 18 plot only. Calculations and optional deep flips still use the band")
+showBand19Input = input.bool(true, "Band 19", inline = "bandPlots4", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 19 plot only. Calculations and optional deep flips still use the band")
+showBand20Input = input.bool(true, "Band 20", inline = "bandPlots4", group = GRP_VISUAL,
+     tooltip = "Show/hide Band 20 plot only. Calculations, optional deepest flips, SL and trailing logic still use the band")
 
 showHeatInput = input.bool(true, "Show Band Heatmap Fill", group = GRP_VISUAL,
      tooltip = "Gradient fill between bands (liquidity pressure zone)")
@@ -224,7 +244,7 @@ riskPresetInput = input.string("Balanced", "Risk Preset",
      options = ["Conservative", "Balanced", "Aggressive", "Scalping", "Custom"],
      group   = GRP_RISK,
      tooltip = "Quick risk presets:\n" +
-               "• Conservative: Band 10 SL in ATR mode, trails after TP1\n" +
+               "• Conservative: Band 20 SL in ATR mode, trails after TP1\n" +
                "• Balanced: SL 1.5×ATR, TP 1R/2R/3R\n" +
                "• Aggressive: SL 1.0×ATR, TP 1.5R/2.5R/4R\n" +
                "• Scalping: SL 0.8×ATR, TP 0.8R/1.5R/2R\n" +
@@ -239,7 +259,7 @@ slModeInput = input.string("Wick-Anchored", "SL Mode",
                "• Wick-Anchored: below/above the signal bar's wick + 0.25×ATR buffer\n" +
                "  (min distance 0.5×ATR enforced). Structure-aware, recommended\n" +
                "• ATR: fixed SL Multiplier × ATR distance from entry\n" +
-               "  Conservative preset uses Band 10, then trails it after TP1")
+               "  Conservative preset uses Band 20, then trails it after TP1")
 
 atrLenRiskInput = input.int(14, "ATR Length (Risk)", minval = 5, maxval = 50, group = GRP_RISK,
      tooltip = "ATR period for stop-loss distance calculation.\n" +
@@ -267,7 +287,7 @@ tp3MultInput = input.float(3.0, "TP3 Multiplier (×Risk)", minval = 1.5, maxval 
 
 beInput = input.bool(true, "Break-Even After TP1", group = GRP_RISK,
      tooltip = "Move stop-loss to entry price once TP1 is reached.\n" +
-               "Conservative ATR uses Band 10 trailing instead of BE.\n" +
+               "Conservative ATR uses Band 20 trailing instead of BE.\n" +
                "Positions stopped at break-even after TP1 count as wins")
 
 showSlTpInput = input.bool(true, "Show SL/TP Lines", group = GRP_RISK,
@@ -470,6 +490,16 @@ float m7 = effBase * (1.0 + 6.0 * effStep)
 float m8 = effBase * (1.0 + 7.0 * effStep)
 float m9 = effBase * (1.0 + 8.0 * effStep)
 float m10 = effBase * (1.0 + 9.0 * effStep)
+float m11 = effBase * (1.0 + 10.0 * effStep)
+float m12 = effBase * (1.0 + 11.0 * effStep)
+float m13 = effBase * (1.0 + 12.0 * effStep)
+float m14 = effBase * (1.0 + 13.0 * effStep)
+float m15 = effBase * (1.0 + 14.0 * effStep)
+float m16 = effBase * (1.0 + 15.0 * effStep)
+float m17 = effBase * (1.0 + 16.0 * effStep)
+float m18 = effBase * (1.0 + 17.0 * effStep)
+float m19 = effBase * (1.0 + 18.0 * effStep)
+float m20 = effBase * (1.0 + 19.0 * effStep)
 
 int flipChoice = switch flipBandStr
     "Fast (Band 2)"    => 2
@@ -480,6 +510,16 @@ int flipChoice = switch flipBandStr
     "Band 8"           => 8
     "Band 9"           => 9
     "Band 10"          => 10
+    "Band 11"          => 11
+    "Band 12"          => 12
+    "Band 13"          => 13
+    "Band 14"          => 14
+    "Band 15"          => 15
+    "Band 16"          => 16
+    "Band 17"          => 17
+    "Band 18"          => 18
+    "Band 19"          => 19
+    "Band 20"          => 20
     =>                    3
 
 // ── Core series ──
@@ -505,6 +545,16 @@ float upper7 = src - trailAtr * m7
 float upper8 = src - trailAtr * m8
 float upper9 = src - trailAtr * m9
 float upper10 = src - trailAtr * m10
+float upper11 = src - trailAtr * m11
+float upper12 = src - trailAtr * m12
+float upper13 = src - trailAtr * m13
+float upper14 = src - trailAtr * m14
+float upper15 = src - trailAtr * m15
+float upper16 = src - trailAtr * m16
+float upper17 = src - trailAtr * m17
+float upper18 = src - trailAtr * m18
+float upper19 = src - trailAtr * m19
+float upper20 = src - trailAtr * m20
 
 float lower1 = src + trailAtr * m1
 float lower2 = src + trailAtr * m2
@@ -516,6 +566,16 @@ float lower7 = src + trailAtr * m7
 float lower8 = src + trailAtr * m8
 float lower9 = src + trailAtr * m9
 float lower10 = src + trailAtr * m10
+float lower11 = src + trailAtr * m11
+float lower12 = src + trailAtr * m12
+float lower13 = src + trailAtr * m13
+float lower14 = src + trailAtr * m14
+float lower15 = src + trailAtr * m15
+float lower16 = src + trailAtr * m16
+float lower17 = src + trailAtr * m17
+float lower18 = src + trailAtr * m18
+float lower19 = src + trailAtr * m19
+float lower20 = src + trailAtr * m20
 
 // ── State ──
 var float ts1 = na
@@ -528,6 +588,16 @@ var float ts7 = na
 var float ts8 = na
 var float ts9 = na
 var float ts10 = na
+var float ts11 = na
+var float ts12 = na
+var float ts13 = na
+var float ts14 = na
+var float ts15 = na
+var float ts16 = na
+var float ts17 = na
+var float ts18 = na
+var float ts19 = na
+var float ts20 = na
 var int   trend = 1
 var int   trendStartBar = 0
 var float trendHigh = na
@@ -543,7 +613,17 @@ float flipPrev = switch flipChoice
     7  => ts7[1]
     8  => ts8[1]
     9  => ts9[1]
-    =>    ts10[1]
+    10 => ts10[1]
+    11 => ts11[1]
+    12 => ts12[1]
+    13 => ts13[1]
+    14 => ts14[1]
+    15 => ts15[1]
+    16 => ts16[1]
+    17 => ts17[1]
+    18 => ts18[1]
+    19 => ts19[1]
+    =>    ts20[1]
 
 bool doFlipDown = trend == 1  and not na(flipPrev) and src < flipPrev
 bool doFlipUp   = trend == -1 and not na(flipPrev) and src > flipPrev
@@ -561,6 +641,16 @@ if trend == 1
         ts8 := lower8
         ts9 := lower9
         ts10 := lower10
+        ts11 := lower11
+        ts12 := lower12
+        ts13 := lower13
+        ts14 := lower14
+        ts15 := lower15
+        ts16 := lower16
+        ts17 := lower17
+        ts18 := lower18
+        ts19 := lower19
+        ts20 := lower20
     else
         ts1 := math.max(upper1, nz(ts1[1], upper1))
         ts2 := math.max(upper2, nz(ts2[1], upper2))
@@ -572,6 +662,16 @@ if trend == 1
         ts8 := math.max(upper8, nz(ts8[1], upper8))
         ts9 := math.max(upper9, nz(ts9[1], upper9))
         ts10 := math.max(upper10, nz(ts10[1], upper10))
+        ts11 := math.max(upper11, nz(ts11[1], upper11))
+        ts12 := math.max(upper12, nz(ts12[1], upper12))
+        ts13 := math.max(upper13, nz(ts13[1], upper13))
+        ts14 := math.max(upper14, nz(ts14[1], upper14))
+        ts15 := math.max(upper15, nz(ts15[1], upper15))
+        ts16 := math.max(upper16, nz(ts16[1], upper16))
+        ts17 := math.max(upper17, nz(ts17[1], upper17))
+        ts18 := math.max(upper18, nz(ts18[1], upper18))
+        ts19 := math.max(upper19, nz(ts19[1], upper19))
+        ts20 := math.max(upper20, nz(ts20[1], upper20))
 else
     if doFlipUp
         trend := 1
@@ -585,6 +685,16 @@ else
         ts8 := upper8
         ts9 := upper9
         ts10 := upper10
+        ts11 := upper11
+        ts12 := upper12
+        ts13 := upper13
+        ts14 := upper14
+        ts15 := upper15
+        ts16 := upper16
+        ts17 := upper17
+        ts18 := upper18
+        ts19 := upper19
+        ts20 := upper20
     else
         ts1 := math.min(lower1, nz(ts1[1], lower1))
         ts2 := math.min(lower2, nz(ts2[1], lower2))
@@ -596,6 +706,16 @@ else
         ts8 := math.min(lower8, nz(ts8[1], lower8))
         ts9 := math.min(lower9, nz(ts9[1], lower9))
         ts10 := math.min(lower10, nz(ts10[1], lower10))
+        ts11 := math.min(lower11, nz(ts11[1], lower11))
+        ts12 := math.min(lower12, nz(ts12[1], lower12))
+        ts13 := math.min(lower13, nz(ts13[1], lower13))
+        ts14 := math.min(lower14, nz(ts14[1], lower14))
+        ts15 := math.min(lower15, nz(ts15[1], lower15))
+        ts16 := math.min(lower16, nz(ts16[1], lower16))
+        ts17 := math.min(lower17, nz(ts17[1], lower17))
+        ts18 := math.min(lower18, nz(ts18[1], lower18))
+        ts19 := math.min(lower19, nz(ts19[1], lower19))
+        ts20 := math.min(lower20, nz(ts20[1], lower20))
 
 int  trendPrev = nz(trend[1], 1)
 bool flipBar   = trend != trendPrev
@@ -678,6 +798,26 @@ if trend == 1 and not na(ts1)
         touchDepthL := 9
     if low <= ts10
         touchDepthL := 10
+    if low <= ts11
+        touchDepthL := 11
+    if low <= ts12
+        touchDepthL := 12
+    if low <= ts13
+        touchDepthL := 13
+    if low <= ts14
+        touchDepthL := 14
+    if low <= ts15
+        touchDepthL := 15
+    if low <= ts16
+        touchDepthL := 16
+    if low <= ts17
+        touchDepthL := 17
+    if low <= ts18
+        touchDepthL := 18
+    if low <= ts19
+        touchDepthL := 19
+    if low <= ts20
+        touchDepthL := 20
 
 int touchDepthS = 0
 if trend == -1 and not na(ts1)
@@ -701,6 +841,26 @@ if trend == -1 and not na(ts1)
         touchDepthS := 9
     if high >= ts10
         touchDepthS := 10
+    if high >= ts11
+        touchDepthS := 11
+    if high >= ts12
+        touchDepthS := 12
+    if high >= ts13
+        touchDepthS := 13
+    if high >= ts14
+        touchDepthS := 14
+    if high >= ts15
+        touchDepthS := 15
+    if high >= ts16
+        touchDepthS := 16
+    if high >= ts17
+        touchDepthS := 17
+    if high >= ts18
+        touchDepthS := 18
+    if high >= ts19
+        touchDepthS := 19
+    if high >= ts20
+        touchDepthS := 20
 
 if touchDepthL > 0
     pendingLong      := retestWindowInput
@@ -838,9 +998,9 @@ if beInput and not conservativeBandStop and tp1FirstTouch and not beActive and a
     beActive        := true
     beJustActivated := true
 
-// ── Band-10 trailing after TP1 (Conservative ATR only) ──
+// ── Band-20 trailing after TP1 (Conservative ATR only) ──
 if conservativeBandStop and activeDir != 0 and tp1Reached and barstate.isconfirmed and not slHitRaw and not tp3HitRaw and not na(activeSL)
-    float trailCandidate = activeDir == 1 and not na(ts10) and ts10 < close ? ts10 : activeDir == -1 and not na(ts10) and ts10 > close ? ts10 : na
+    float trailCandidate = activeDir == 1 and not na(ts20) and ts20 < close ? ts20 : activeDir == -1 and not na(ts20) and ts20 > close ? ts20 : na
     if not na(trailCandidate)
         activeSL := trailActive ? (activeDir == 1 ? math.max(activeSL, trailCandidate) : math.min(activeSL, trailCandidate)) : trailCandidate
         trailActive := true
@@ -948,7 +1108,7 @@ bool evShortEntry = false
 
 if longEntrySignal and activeDir == 0 and slDistance > 0
     float slAtrLong  = close - slDistance
-    float slBandLong = conservativeBandStop and not na(ts10) and ts10 < close ? ts10 : slAtrLong
+    float slBandLong = conservativeBandStop and not na(ts20) and ts20 < close ? ts20 : slAtrLong
     float slWickLong = math.min(low - riskAtr * 0.25, close - riskAtr * 0.5)
     float slLong     = slModeInput == "ATR" ? slBandLong : slWickLong
     float riskLong   = close - slLong
@@ -969,7 +1129,7 @@ if longEntrySignal and activeDir == 0 and slDistance > 0
 
 if shortEntrySignal and activeDir == 0 and slDistance > 0
     float slAtrShort  = close + slDistance
-    float slBandShort = conservativeBandStop and not na(ts10) and ts10 > close ? ts10 : slAtrShort
+    float slBandShort = conservativeBandStop and not na(ts20) and ts20 > close ? ts20 : slAtrShort
     float slWickShort = math.max(high + riskAtr * 0.25, close + riskAtr * 0.5)
     float slShort     = slModeInput == "ATR" ? slBandShort : slWickShort
     float riskShort   = slShort - close
@@ -1017,6 +1177,16 @@ int H6_T = isDark ? 46 : 40
 int H7_T = isDark ? 42 : 36
 int H8_T = isDark ? 38 : 32
 int H9_T = isDark ? 34 : 28
+int H10_T = isDark ? 32 : 26
+int H11_T = isDark ? 30 : 24
+int H12_T = isDark ? 28 : 22
+int H13_T = isDark ? 26 : 20
+int H14_T = isDark ? 24 : 18
+int H15_T = isDark ? 22 : 16
+int H16_T = isDark ? 20 : 14
+int H17_T = isDark ? 18 : 12
+int H18_T = isDark ? 16 : 10
+int H19_T = isDark ? 14 : 8
 
 p1 = plot(flipBar ? na : ts1, "Band 1", color = color.new(trendColor, B1_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput and showBand1Input ? display.all : display.none)
 p2 = plot(flipBar ? na : ts2, "Band 2", color = color.new(trendColor, B2_T), linewidth = 1, style = plot.style_linebr, display = showBandsInput and showBand2Input ? display.all : display.none)
@@ -1028,6 +1198,16 @@ p7 = plot(flipBar ? na : ts7, "Band 7", color = color.new(trendColor, B7_T), lin
 p8 = plot(flipBar ? na : ts8, "Band 8", color = color.new(trendColor, B8_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand8Input ? display.all : display.none)
 p9 = plot(flipBar ? na : ts9, "Band 9", color = color.new(trendColor, B9_T), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand9Input ? display.all : display.none)
 p10 = plot(flipBar ? na : ts10, "Band 10", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand10Input ? display.all : display.none)
+p11 = plot(flipBar ? na : ts11, "Band 11", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand11Input ? display.all : display.none)
+p12 = plot(flipBar ? na : ts12, "Band 12", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand12Input ? display.all : display.none)
+p13 = plot(flipBar ? na : ts13, "Band 13", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand13Input ? display.all : display.none)
+p14 = plot(flipBar ? na : ts14, "Band 14", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand14Input ? display.all : display.none)
+p15 = plot(flipBar ? na : ts15, "Band 15", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand15Input ? display.all : display.none)
+p16 = plot(flipBar ? na : ts16, "Band 16", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand16Input ? display.all : display.none)
+p17 = plot(flipBar ? na : ts17, "Band 17", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand17Input ? display.all : display.none)
+p18 = plot(flipBar ? na : ts18, "Band 18", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand18Input ? display.all : display.none)
+p19 = plot(flipBar ? na : ts19, "Band 19", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand19Input ? display.all : display.none)
+p20 = plot(flipBar ? na : ts20, "Band 20", color = color.new(trendColor, 0), linewidth = 2, style = plot.style_linebr, display = showBandsInput and showBand20Input ? display.all : display.none)
 
 fill(p1, p2, color.new(trendColor, H1_T), title = "Heatmap Inner",  display = showHeatInput and showBandsInput and showBand1Input and showBand2Input ? display.all : display.none)
 fill(p2, p3, color.new(trendColor, H2_T), title = "Heatmap Middle", display = showHeatInput and showBandsInput and showBand2Input and showBand3Input ? display.all : display.none)
@@ -1038,6 +1218,16 @@ fill(p6, p7, color.new(trendColor, H6_T), title = "Heatmap Band 7",  display = s
 fill(p7, p8, color.new(trendColor, H7_T), title = "Heatmap Band 8",  display = showHeatInput and showBandsInput and showBand7Input and showBand8Input ? display.all : display.none)
 fill(p8, p9, color.new(trendColor, H8_T), title = "Heatmap Band 9",  display = showHeatInput and showBandsInput and showBand8Input and showBand9Input ? display.all : display.none)
 fill(p9, p10, color.new(trendColor, H9_T), title = "Heatmap Band 10", display = showHeatInput and showBandsInput and showBand9Input and showBand10Input ? display.all : display.none)
+fill(p10, p11, color.new(trendColor, H10_T), title = "Heatmap Band 11", display = showHeatInput and showBandsInput and showBand10Input and showBand11Input ? display.all : display.none)
+fill(p11, p12, color.new(trendColor, H11_T), title = "Heatmap Band 12", display = showHeatInput and showBandsInput and showBand11Input and showBand12Input ? display.all : display.none)
+fill(p12, p13, color.new(trendColor, H12_T), title = "Heatmap Band 13", display = showHeatInput and showBandsInput and showBand12Input and showBand13Input ? display.all : display.none)
+fill(p13, p14, color.new(trendColor, H13_T), title = "Heatmap Band 14", display = showHeatInput and showBandsInput and showBand13Input and showBand14Input ? display.all : display.none)
+fill(p14, p15, color.new(trendColor, H14_T), title = "Heatmap Band 15", display = showHeatInput and showBandsInput and showBand14Input and showBand15Input ? display.all : display.none)
+fill(p15, p16, color.new(trendColor, H15_T), title = "Heatmap Band 16", display = showHeatInput and showBandsInput and showBand15Input and showBand16Input ? display.all : display.none)
+fill(p16, p17, color.new(trendColor, H16_T), title = "Heatmap Band 17", display = showHeatInput and showBandsInput and showBand16Input and showBand17Input ? display.all : display.none)
+fill(p17, p18, color.new(trendColor, H17_T), title = "Heatmap Band 18", display = showHeatInput and showBandsInput and showBand17Input and showBand18Input ? display.all : display.none)
+fill(p18, p19, color.new(trendColor, H18_T), title = "Heatmap Band 19", display = showHeatInput and showBandsInput and showBand18Input and showBand19Input ? display.all : display.none)
+fill(p19, p20, color.new(trendColor, H19_T), title = "Heatmap Band 20", display = showHeatInput and showBandsInput and showBand19Input and showBand20Input ? display.all : display.none)
 
 // ══════════════════════════════════════════════════════════
 // 10. LABELS & SHAPES — SIGNALS
@@ -1049,6 +1239,16 @@ float flipLabelLevel = switch flipChoice
     8  => ts8
     9  => ts9
     10 => ts10
+    11 => ts11
+    12 => ts12
+    13 => ts13
+    14 => ts14
+    15 => ts15
+    16 => ts16
+    17 => ts17
+    18 => ts18
+    19 => ts19
+    20 => ts20
     =>    ts4
 
 if confirmedBullFlip and showFlipLabelsInput
